@@ -241,16 +241,39 @@ class LLMCommunicator:
 
     def validate_and_format_response(self, response):
         try:
+            # Clean up any potential malformed XML before parsing
             response = response.replace("</ response>", "</response>")
+
+            # Log response for debugging purposes
+            logging.debug(f"Raw XML response: {response}")
+
+            # Parse XML
             root = ET.fromstring(response)
+
+            # Extract chat text
             chat = root.find('chat').text if root.find('chat') is not None else None
-            commands = [cmd.text for cmd in root.findall('.//command')] if root.find('.//command') is not None else None
+
+            # Extract all command texts
+            commands = []
+            arduino_node = root.find('arduino')
+            if arduino_node is not None:
+                commands_node = arduino_node.find('commands')
+                if commands_node is not None:
+                    commands = [cmd.text for cmd in commands_node.findall('command')]
+
+            # Extract state information
+            state_node = root.find('state')
             state = {
-                'currentMood': root.find('state/currentMood').text if root.find('state/currentMood') is not None else None,
-                'whatYouWonderAbout': root.find('state/whatYouWonderAbout').text if root.find('state/whatYouWonderAbout') is not None else None,
-                'primaryDirective': root.find('state/primaryDirective').text if root.find('state/primaryDirective') is not None else None,
+                'currentMood': state_node.find('currentMood').text if state_node is not None and state_node.find('currentMood') is not None else None,
+                'whatYouWonderAbout': state_node.find('whatYouWonderAbout').text if state_node is not None and state_node.find('whatYouWonderAbout') is not None else None,
+                'primaryDirective': state_node.find('primaryDirective').text if state_node is not None and state_node.find('primaryDirective') is not None else None,
             }
+
             return {'chat': chat, 'commands': commands}, state
+        except ET.ParseError as e:
+            # If there's a parse error, log the problematic XML
+            logging.error(f"XML Parse Error: {e}\nProblematic XML: {response}")
+            return {'chat': "I'm sorry, I encountered an error processing your request.", 'commands': None}, {}
         except Exception as e:
             logging.error(f"Invalid XML response from LLM: {e}")
             return {'chat': "I'm sorry, I encountered an error processing your request.", 'commands': None}, {}
