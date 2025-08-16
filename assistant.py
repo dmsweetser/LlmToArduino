@@ -300,6 +300,7 @@ class Assistant:
     def __init__(self, console_mode=False):
         setup_logging()
         self.console_mode = console_mode
+        self.automation_active = False
         self.current_state = load_state()
         self.current_state["last_interaction_time"] = time.time()
         com_port = load_com_port()
@@ -331,9 +332,13 @@ class Assistant:
     def run(self):
         if self.console_mode:
             print("Console mode enabled. Type your input and press Enter.")
+            print("Type 'start automation'/'stop automation' to toggle autonomous mode.")
         while True:
             try:
-                if self.console_mode:
+                if self.automation_active == True:
+                    user_utterance = "Do whatever you want! Have fun with it."
+                    self.record_queue.append(user_utterance)
+                elif self.console_mode:
                     user_utterance = input("> ")
                     if user_utterance.strip():
                         self.record_queue.append(user_utterance)
@@ -347,13 +352,11 @@ class Assistant:
                         self.current_state["last_interaction_time"] = time.time()
                         if "start automation" in user_utterance.lower():
                             self.arduino_com.start_automation()
-                            self.current_state["automation_active"] = True
+                            self.automation_active = True
                         elif "stop automation" in user_utterance.lower():
                             self.arduino_com.stop_automation()
-                            self.current_state["automation_active"] = False
+                            self.automation_active = False
                         else:
-                            if self.current_state["automation_active"]:
-                                user_utterance = "Do whatever you want! Have fun with it."
                             response, new_state_partial = self.llm_com.process_instruction(
                                 user_utterance,
                                 self.current_state["last_successful_commands"],
