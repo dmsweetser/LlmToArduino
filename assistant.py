@@ -241,9 +241,10 @@ class LLMCommunicator:
 
     def validate_and_format_response(self, response):
         try:
+            response = response.replace("</ response>", "</response>")
             root = ET.fromstring(response)
             chat = root.find('chat').text if root.find('chat') is not None else None
-            commands = [cmd.text for cmd in root.find('arduino/commands')] if root.find('arduino/commands') is not None else None
+            commands = [cmd.text for cmd in root.findall('.//command')] if root.find('.//command') is not None else None
             state = {
                 'currentMood': root.find('state/currentMood').text if root.find('state/currentMood') is not None else None,
                 'whatYouWonderAbout': root.find('state/whatYouWonderAbout').text if root.find('state/whatYouWonderAbout') is not None else None,
@@ -351,6 +352,8 @@ class Assistant:
                             self.arduino_com.stop_automation()
                             self.current_state["automation_active"] = False
                         else:
+                            if self.current_state["automation_active"]:
+                                user_utterance = "Do whatever you want! Have fun with it."
                             response, new_state_partial = self.llm_com.process_instruction(
                                 user_utterance,
                                 self.current_state["last_successful_commands"],
