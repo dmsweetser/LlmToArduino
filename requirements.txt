@@ -1,0 +1,6 @@
+pyserial
+pyttsx3
+llama-cpp-python
+xmltodict
+openai-whisper
+pyaudio

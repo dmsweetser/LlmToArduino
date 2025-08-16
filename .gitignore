@@ -1,0 +1,16 @@
+venv
+polynomial_constants.json
+__pycache__
+config
+output.txt
+script.log
+model
+output.wav
+markdown.txt
+*.gguf
+logs/
+logs
+pre.ps1
+post.ps1
+state.json
+instructions.txt
