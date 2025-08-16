@@ -13,6 +13,7 @@ import pyaudio
 import whisper
 import re
 import json
+import xml.etree.ElementTree as ET
 from collections import deque
 from threading import Thread, Lock
 import sys
@@ -21,7 +22,11 @@ def setup_logging():
     log_dir = "logs"
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, f"app_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-    logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(
+        filename=log_file,
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     logging.getLogger().setLevel(logging.INFO)
     logging.getLogger('pyttsx3').setLevel(logging.WARNING)
 
@@ -86,21 +91,23 @@ class ArduinoCommunicator:
         self.command_lock = Lock()
         self.automation_active = False
 
-    def send_command(self, command):
-        if str(command).endswith(":") == False:
-            command = command + ":"
-        command_str = f"{command}\n"
-        logging.info(f"Sending command: {command_str.strip()}")
+    def send_command(self, command_xml):
         try:
-            time.sleep(1)  # Give the Arduino time to respond
-            self.ser.write(command_str.encode())
-            # Read all available lines
+            time.sleep(2)
+            commands = re.findall(r'<command>(.*?)</command>', command_xml)
             response = ""
-            time.sleep(1)  # Give the Arduino time to respond
-            while self.ser.in_waiting > 0:
-                line = self.ser.readline().decode().strip()
-                response += line + "\n"
-            logging.info(f"Received response: {response.strip()}")
+            for cmd in commands:
+                cmd = cmd.strip()
+                if not cmd.endswith(':'):
+                    cmd += ':'
+                cmd_str = f"{cmd}\n"
+                logging.info(f"Sending command: {cmd_str.strip()}")
+                self.ser.write(cmd_str.encode())
+                time.sleep(2)
+                while self.ser.in_waiting > 0:
+                    line = self.ser.readline().decode().strip()
+                    response += line + "\n"
+                logging.info(f"Received response: {response.strip()}")
             return response.strip()
         except Exception as e:
             logging.error(f"Error sending command: {e}")
@@ -139,7 +146,7 @@ class ArduinoCommunicator:
         logging.info("Automation stopped.")
 
 def get_arduino_capabilities(arduino_com, max_retries=3):
-    capabilities_command = "getCapabilities:"
+    capabilities_command = "<command>getCapabilities:</command>"
     for attempt in range(max_retries):
         response = arduino_com.send_command(capabilities_command)
         logging.debug(f"Capabilities response attempt {attempt + 1}: {response}")
@@ -234,33 +241,18 @@ class LLMCommunicator:
 
     def validate_and_format_response(self, response):
         try:
-            response = re.sub(r'>\s+<', '><', response)
-            response_match = re.search(r'<response>.*?</response>', response, re.DOTALL)
-            if not response_match:
-                return {'chat': "No <response> block found"}, {}
-            clean_response = response_match.group(0)
-            chat_match = re.search(r'<chat>(.*?)</chat>', clean_response, re.DOTALL)
-            chat = chat_match.group(1).strip() if chat_match else None
-            commands_match = re.search(r'<commands>(.*?)</commands>', clean_response, re.DOTALL)
-            commands = commands_match.group(1).strip() if commands_match else None
-            state_match = re.search(r'<state>(.*?)</state>', clean_response, re.DOTALL)
-            state_content = state_match.group(1).strip() if state_match else None
-            state = {}
-            if state_content:
-                state['currentMood'] = self.extract_xml_content(state_content, 'currentMood')
-                state['whatYouWonderAbout'] = self.extract_xml_content(state_content, 'whatYouWonderAbout')
-                state['primaryDirective'] = self.extract_xml_content(state_content, 'primaryDirective')
+            root = ET.fromstring(response)
+            chat = root.find('chat').text if root.find('chat') is not None else None
+            commands = [cmd.text for cmd in root.find('arduino/commands')] if root.find('arduino/commands') is not None else None
+            state = {
+                'currentMood': root.find('state/currentMood').text if root.find('state/currentMood') is not None else None,
+                'whatYouWonderAbout': root.find('state/whatYouWonderAbout').text if root.find('state/whatYouWonderAbout') is not None else None,
+                'primaryDirective': root.find('state/primaryDirective').text if root.find('state/primaryDirective') is not None else None,
+            }
             return {'chat': chat, 'commands': commands}, state
         except Exception as e:
             logging.error(f"Invalid XML response from LLM: {e}")
             return {'chat': "I'm sorry, I encountered an error processing your request.", 'commands': None}, {}
-
-    def extract_xml_content(self, xml_string, tag_name):
-        pattern = f"<{tag_name}>(.*?)</{tag_name}>"
-        match = re.search(pattern, xml_string)
-        if match:
-            return match.group(1).strip()
-        return ""
 
 def record_audio(filename="output.wav", record_seconds=5, sample_rate=16000):
     chunk = 1024
@@ -312,26 +304,23 @@ class Assistant:
         com_port = load_com_port()
         self.arduino_com = ArduinoCommunicator(com_port)
         capabilities = get_arduino_capabilities(self.arduino_com)
-        if capabilities is None:
-            logging.error("Failed to fetch Arduino capabilities.")
-            return
+        if not capabilities:
+            logging.error("Failed to fetch Arduino capabilities. Exiting.")
+            sys.exit(1)
         self.arduino_com.capabilities = capabilities
         logging.info(f"Arduino capabilities: {self.arduino_com.capabilities}")
         self.llm_com = LLMCommunicator(model_path="Mistral-7B-Instruct-v0.3-IQ4_XS.gguf", n_ctx=4096)
         self.record_queue = deque(maxlen=30)
         self.conversation_history = self.current_state.get("conversation_history", [])
-
         if not self.console_mode:
             global transcription_model
             transcription_model = whisper.load_model("./tiny.en.pt")
             transcription_thread = Thread(target=offline_speech_recognition, args=(self.record_queue,))
             transcription_thread.daemon = True
             transcription_thread.start()
-
         command_processing_thread = Thread(target=self.arduino_com.process_queue)
         command_processing_thread.daemon = True
         command_processing_thread.start()
-
         if not self.console_mode:
             self.arduino_com.speak("Hello! I'm your interactive assistant. You can talk to me naturally and I'll respond conversationally.")
 
@@ -341,14 +330,12 @@ class Assistant:
     def run(self):
         if self.console_mode:
             print("Console mode enabled. Type your input and press Enter.")
-
         while True:
             try:
                 if self.console_mode:
                     user_utterance = input("> ")
                     if user_utterance.strip():
                         self.record_queue.append(user_utterance)
-
                 if self.record_queue:
                     user_utterance = self.record_queue.popleft()
                     if user_utterance.strip():
@@ -357,7 +344,6 @@ class Assistant:
                         if len(self.conversation_history) > 20:
                             self.conversation_history = self.conversation_history[-20:]
                         self.current_state["last_interaction_time"] = time.time()
-
                         if "start automation" in user_utterance.lower():
                             self.arduino_com.start_automation()
                             self.current_state["automation_active"] = True
@@ -372,26 +358,21 @@ class Assistant:
                                 self.current_state,
                                 self.conversation_history
                             )
-
                             if new_state_partial:
                                 self.current_state.update(new_state_partial)
-
                             if response.get('chat'):
                                 if self.console_mode:
                                     print(f"AI: {response['chat']}")
                                 else:
                                     self.conversation_history.append(f"AI: {response['chat']}")
-
                             if response.get('commands'):
                                 print("Sending command to Arduino...")
                                 self.arduino_com.queue_command(response['commands'])
                                 self.current_state["last_successful_commands"].append(response['commands'])
                                 if len(self.current_state["last_successful_commands"]) > 5:
                                     self.current_state["last_successful_commands"].pop(0)
-
                         self.current_state["conversation_history"] = self.conversation_history
                         save_state(self.current_state)
-
                 time.sleep(0.1)
             except Exception as e:
                 logging.error('Exception occurred: ' + str(e), exc_info=True)
