@@ -124,3 +124,13 @@ Contributions are welcome! Open an issue or submit a pull request for bug fixes,
 - [Arduino](https://www.arduino.cc/) for the hardware platform.
 
 ---
+
+
+
+NEW NOTES
+
+
+apt install portaudio19-dev python3-dev curl
+curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+nano ~/.bashrc
+ADD export PATH="$PATH:/home/daniel/LlmToArduino/bin"

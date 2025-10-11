@@ -68,35 +68,19 @@ info "Installing Arduino CLI..."
 # Check if arduino-cli is already installed
 if ! command -v arduino-cli &> /dev/null; then
     # Download arduino-cli
-    info "Downloading Arduino CLI..."
-    if ! curl -fsSL "https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz" -o arduino-cli_compressed.tar.gz; then
-        error_exit "Failed to download Arduino CLI."
-    fi
-
-    # Extract
-    info "Extracting Arduino CLI..."
-    if ! tar -xzf arduino-cli_compressed.tar.gz; then
-        error_exit "Failed to extract Arduino CLI."
-    fi
-
-    # Move to a known location (optional: add to PATH)
-    mv arduino-cli "$SCRIPT_DIR/arduino-cli"
-    chmod +x "$SCRIPT_DIR/arduino-cli"
-
-    # Add to PATH temporarily
-    export PATH="$SCRIPT_DIR/arduino-cli:$PATH"
+    curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
 else
     info "Arduino CLI already installed."
 fi
 
 # === Step 6: Install Arduino cores and libraries ===
 info "Installing Arduino AVR core..."
-if ! "$SCRIPT_DIR/arduino-cli" core install arduino:avr; then
+if ! arduino-cli core install arduino:avr; then
     error_exit "Failed to install arduino:avr core."
 fi
 
 info "Installing LedControl library..."
-if ! "$SCRIPT_DIR/arduino-cli" lib install LedControl; then
+if ! arduino-cli lib install LedControl; then
     error_exit "Failed to install LedControl library."
 fi
 
@@ -119,7 +103,7 @@ fi
 info "Detecting connected Arduino board..."
 
 # Save board list to config file
-if ! "$SCRIPT_DIR/arduino-cli" board list > "$CONFIG_DIR/board_list.txt"; then
+if ! arduino-cli board list > "$CONFIG_DIR/board_list.txt"; then
     error_exit "Failed to detect Arduino board."
 fi
 
@@ -157,12 +141,12 @@ info "Board detection complete. Port and FQBN saved to config/port.txt and confi
 
 # === Step 9: Compile and upload sketch ===
 info "Compiling sketch..."
-if ! "$SCRIPT_DIR/arduino-cli" compile --fqbn "$fqbn" "$SKETCH_DIR"; then
+if ! arduino-cli compile --fqbn "$fqbn" "$SKETCH_DIR"; then
     error_exit "Failed to compile sketch."
 fi
 
 info "Uploading sketch..."
-if ! "$SCRIPT_DIR/arduino-cli" upload -p "$port" --fqbn "$fqbn" "$SKETCH_DIR"; then
+if ! arduino-cli upload -p "$port" --fqbn "$fqbn" "$SKETCH_DIR"; then
     error_exit "Failed to upload sketch."
 fi
 
