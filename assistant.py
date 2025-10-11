@@ -7,7 +7,6 @@ import logging
 from datetime import datetime
 from llama_cpp import Llama
 import time
-import winsound
 import subprocess
 import pyaudio
 import whisper
@@ -117,12 +116,6 @@ class ArduinoCommunicator:
         logging.info("I said this: " + text)
         self.tts_engine.say(text)
         self.tts_engine.runAndWait()
-
-    def play_tone(self):
-        winsound.Beep(1000, 500)
-
-    def stop_tone(self):
-        winsound.Beep(500, 100)
 
     def queue_command(self, command):
         with self.command_lock:
