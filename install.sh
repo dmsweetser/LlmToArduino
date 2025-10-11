@@ -69,13 +69,13 @@ info "Installing Arduino CLI..."
 if ! command -v arduino-cli &> /dev/null; then
     # Download arduino-cli
     info "Downloading Arduino CLI..."
-    if ! curl -fsSL "https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz" -o arduino-cli.tar.gz; then
+    if ! curl -fsSL "https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz" -o arduino-cli_compressed.tar.gz; then
         error_exit "Failed to download Arduino CLI."
     fi
 
     # Extract
     info "Extracting Arduino CLI..."
-    if ! tar -xzf arduino-cli.tar.gz; then
+    if ! tar -xzf arduino-cli_compressed.tar.gz; then
         error_exit "Failed to extract Arduino CLI."
     fi
 
