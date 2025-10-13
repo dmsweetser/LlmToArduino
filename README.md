@@ -111,24 +111,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ---
 
-## Contributing
-
-Contributions are welcome! Open an issue or submit a pull request for bug fixes, new features, or improvements.
-
----
-
-## Acknowledgments
-
-- [Mistral AI](https://mistral.ai/) for the LLM model.
-- [Whisper](https://github.com/openai/whisper) for speech recognition.
-- [Arduino](https://www.arduino.cc/) for the hardware platform.
-
----
-
-
-
 NEW NOTES
-
 
 sudo apt install portaudio19-dev python3-dev curl espeak-ng
 curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh

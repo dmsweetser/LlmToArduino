@@ -7,8 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="$SCRIPT_DIR/config"
 SKETCH_DIR="$SCRIPT_DIR/sketch"
 REQUIREMENTS_FILE="$SCRIPT_DIR/requirements.txt"
-LLM_MODEL="Mistral-7B-Instruct-v0.3-IQ4_XS.gguf"
-LLM_URL="https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3-IQ4_XS.gguf?download=true"
+LLM_MODEL="Qwen2.5-7B-Instruct-IQ4_XS.gguf"
+LLM_URL="https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-IQ4_XS.gguf?download=true"
 
 # === Functions ===
 

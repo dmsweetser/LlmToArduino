@@ -83,8 +83,8 @@ echo Arduino CLI installed successfully.
 
 echo Downloading LLM model if not present...
 
-if not exist Mistral-7B-Instruct-v0.3-IQ4_XS.gguf (
-    curl -fsSL "https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3-IQ4_XS.gguf?download=true" -o Mistral-7B-Instruct-v0.3-IQ4_XS.gguf
+if not exist Qwen2.5-7B-Instruct-IQ4_XS.gguf (
+    curl -fsSL "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-IQ4_XS.gguf?download=true" -o Qwen2.5-7B-Instruct-IQ4_XS.gguf
     if %errorlevel% neq 0 (
         echo Error: Failed to download LLM model.
         exit /b 1
