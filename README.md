@@ -92,7 +92,7 @@ run_voice.bat
 
 ### Changing the LLM Model
 
-- Replace the `Mistral-7B-Instruct-v0.3-IQ4_XS.gguf` file with your preferred model and update the `model_path` in `script.py`.
+- Replace the `Mistral-7B-Instruct-v0.3-IQ4_XS.gguf` file with your preferred model and update the `model_path` in `app.py`.
 
 ---
 
