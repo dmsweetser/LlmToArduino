@@ -226,7 +226,7 @@ class LLMCommunicator:
             max_tokens=2048,
             stream=True,
             temperature=0.7,
-            repetition_penalty=1.05,
+            repeat_penalty=1.05,
             top_p=0.8,
             top_k=20
         ):
@@ -339,7 +339,7 @@ class Assistant:
             sys.exit(1)
         self.arduino_com.capabilities = capabilities
         logging.info(f"Arduino capabilities: {self.arduino_com.capabilities}")
-        self.llm_com = LLMCommunicator(model_path="Qwen2.5-7B-Instruct-GGUF", n_ctx=4096)
+        self.llm_com = LLMCommunicator(model_path="Qwen2.5-7B-Instruct-IQ4_XS.gguf", n_ctx=4096)
         self.record_queue = deque(maxlen=30)
         self.conversation_history = self.current_state.get("conversation_history", [])
         if not self.console_mode:
