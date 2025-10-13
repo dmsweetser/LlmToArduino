@@ -149,25 +149,79 @@ def get_arduino_capabilities(arduino_com, max_retries=3):
     return None
 
 class LLMCommunicator:
-    def __init__(self, model_path, n_ctx=512):
+    def __init__(self, arduino_com, model_path, n_ctx=512):
+        self.arduino_com = arduino_com
         self.llm = Llama(model_path=model_path, n_ctx=n_ctx)
 
     def process_instruction(self, user_command, last_successful_commands, capabilities, current_state, conversation_history):
         try:
+            # Step 1: Initial LLM response (chat + commands)
             state_xml = self.format_state(current_state)
             prompt_xml = self.format_prompt(user_command, last_successful_commands, capabilities, state_xml, conversation_history)
-            logging.debug('Here is the XML prompt:' + prompt_xml)
+            logging.debug('Initial XML prompt:' + prompt_xml)
+
             response_text = self.generate_response(prompt_xml)
             response_text = response_text.replace('\n', '')
-            logging.debug(response_text)
             generated_text = response_text.strip()
-            logging.info("LLM generated response:")
+            logging.info("LLM generated initial response:")
             logging.info(generated_text)
+
             response_dict, new_state = self.validate_and_format_response(generated_text)
-            return response_dict, new_state
+            if not response_dict:
+                return {'chat': "I couldn't process your request.", 'commands': None}, current_state
+
+            # Extract chat and commands
+            initial_chat = response_dict.get('chat', '')
+            commands = response_dict.get('commands', [])
+
+            # Step 2: Send commands to Arduino and wait for response
+            if commands:
+                logging.info(f"Sending {len(commands)} commands to Arduino...")
+                commands_xml = "<commands>\n"
+                for cmd in commands:
+                    commands_xml += f"    <command>{cmd}</command>\n"
+                commands_xml += "</commands>"
+                arduino_response = self.arduino_com.send_command(commands_xml)
+                logging.info(f"Arduino response: {arduino_response}")
+
+                # Step 3: Add Arduino's response to conversation history
+                if arduino_response:
+                    conversation_history.append(f"Arduino: {arduino_response}")
+                    logging.info("Arduino response added to conversation history.")
+                else:
+                    logging.warning("Arduino returned no response.")
+                    conversation_history.append("Arduino: No response received.")
+            else:
+                logging.info("No commands to send to Arduino.")
+
+            # Step 4: Final LLM call: let AI react to the Arduino's response
+            final_prompt_xml = self.format_prompt(
+                user_command,
+                last_successful_commands,
+                capabilities,
+                self.format_state(new_state),
+                conversation_history[-5:]  # Keep only last 5 messages
+            )
+            logging.debug('Final XML prompt (after Arduino response):' + final_prompt_xml)
+
+            final_response_text = self.generate_response(final_prompt_xml)
+            final_response_text = final_response_text.replace('\n', '')
+            final_generated_text = final_response_text.strip()
+            logging.info("LLM generated final response after Arduino feedback:")
+            logging.info(final_generated_text)
+
+            final_response_dict, _ = self.validate_and_format_response(final_generated_text)
+            final_chat = final_response_dict.get('chat', initial_chat)  # Fallback to initial if no new chat
+
+            # Return final chat + commands (if any) + updated state
+            return {
+                'chat': final_chat,
+                'commands': commands  # Optionally return original commands too
+            }, new_state
+
         except Exception as e:
-            logging.error(f"Error processing instruction: {e}")
-            return {'chat': "I encountered an error processing your request", 'commands': None}, current_state
+            logging.error(f"Error during multi-turn processing: {e}", exc_info=True)
+            return {'chat': "I encountered an error while processing your request.", 'commands': None}, current_state
 
     def format_state(self, current_state):
         state_xml = (
@@ -339,7 +393,7 @@ class Assistant:
             sys.exit(1)
         self.arduino_com.capabilities = capabilities
         logging.info(f"Arduino capabilities: {self.arduino_com.capabilities}")
-        self.llm_com = LLMCommunicator(model_path="Qwen2.5-7B-Instruct-IQ4_XS.gguf", n_ctx=4096)
+        self.llm_com = LLMCommunicator(self.arduino_com, model_path="Qwen2.5-7B-Instruct-IQ4_XS.gguf", n_ctx=4096)
         self.record_queue = deque(maxlen=30)
         self.conversation_history = self.current_state.get("conversation_history", [])
         if not self.console_mode:
@@ -374,7 +428,7 @@ class Assistant:
                     user_utterance = self.record_queue.popleft()
                     if user_utterance.strip():
                         print("Processing user input...")
-                        self.conversation_history.append(f"User: {user_utterance}")
+                        self.conversation_history.append("User: " + user_utterance)
                         if len(self.conversation_history) > 20:
                             self.conversation_history = self.conversation_history[-20:]
                         self.current_state["last_interaction_time"] = time.time()
