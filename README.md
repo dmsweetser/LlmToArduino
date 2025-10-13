@@ -130,9 +130,8 @@ Contributions are welcome! Open an issue or submit a pull request for bug fixes,
 NEW NOTES
 
 
-apt install portaudio19-dev python3-dev curl
+sudo apt install portaudio19-dev python3-dev curl espeak-ng
 curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
 nano ~/.bashrc
 ADD export PATH="$PATH:/home/%USER%/LlmToArduino/bin"
-
 sudo usermod -aG dialout %USER%

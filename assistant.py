@@ -236,9 +236,17 @@ class LLMCommunicator:
         try:
             # Clean up any potential malformed XML before parsing
             response = response.replace("</ response>", "</response>")
+            
+            # Remove any leading non-XML content (like "---------------", whitespace, etc.)
+            # Look for the opening <response> tag and take everything from there onward
+            start_idx = response.find('<response>')
+            if start_idx == -1:
+                logging.error(f"Response does not contain <response> tag: {response}")
+                return {'chat': "I'm sorry, I encountered an error processing your request.", 'commands': None}, {}
+            response = response[start_idx:]
 
             # Log response for debugging purposes
-            logging.debug(f"Raw XML response: {response}")
+            logging.debug(f"Cleaned XML response: {response}")
 
             # Parse XML
             root = ET.fromstring(response)
@@ -387,9 +395,14 @@ class Assistant:
                                     print(f"AI: {response['chat']}")
                                 else:
                                     self.conversation_history.append(f"AI: {response['chat']}")
-                            if response.get('commands'):
-                                print("Sending command to Arduino...")
-                                self.arduino_com.queue_command(response['commands'])
+                                if response.get('commands'):
+                                    print("Sending command to Arduino...")
+                                    # Convert list of commands to XML format
+                                    commands_xml = "<commands>\n"
+                                    for cmd in response['commands']:
+                                        commands_xml += f"    <command>{cmd}</command>\n"
+                                    commands_xml += "</commands>"
+                                    self.arduino_com.queue_command(commands_xml)
                                 self.current_state["last_successful_commands"].append(response['commands'])
                                 if len(self.current_state["last_successful_commands"]) > 5:
                                     self.current_state["last_successful_commands"].pop(0)
