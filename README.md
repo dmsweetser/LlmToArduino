@@ -133,4 +133,6 @@ NEW NOTES
 apt install portaudio19-dev python3-dev curl
 curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
 nano ~/.bashrc
-ADD export PATH="$PATH:/home/daniel/LlmToArduino/bin"
+ADD export PATH="$PATH:/home/%USER%/LlmToArduino/bin"
+
+sudo usermod -aG dialout %USER%
