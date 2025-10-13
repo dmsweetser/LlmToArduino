@@ -99,45 +99,28 @@ else
     info "LLM model already exists."
 fi
 
-# === Step 8: Detect Arduino board and port ===
-info "Detecting connected Arduino board..."
+# === Step 8: Display board list and prompt user for port and FQBN ===
+info "Detecting connected Arduino boards..."
 
-# Save board list to config file
-if ! arduino-cli board list > "$CONFIG_DIR/board_list.txt"; then
-    error_exit "Failed to detect Arduino board."
+# Get the board list and display it
+if ! arduino-cli board list; then
+    error_exit "Failed to detect Arduino boards."
 fi
 
-# Parse board list to find FQBN and port
-FOUND_BOARD=0
-while IFS= read -r line; do
-    # Skip header line (first line)
-    if [[ "$line" == *"Port"* ]] || [[ "$line" == *"Board"* ]]; then
-        continue
-    fi
+# Prompt user for port and FQBN
+read -p "Enter the port (e.g., /dev/ttyUSB0, COM3): " port
+read -p "Enter the FQBN (e.g., arduino:avr:mega): " fqbn
 
-    # Look for "arduino:" in the line
-    if [[ "$line" == *"arduino:"* ]]; then
-        # Extract port (first field)
-        port=$(echo "$line" | awk '{print $1}')
-
-        # Extract FQBN (last two non-empty fields)
-        fqbn=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if($i ~ /^arduino:/) {f=$i; if(i<NF) f=$i" "$i+1} } END{print f}')
-
-        if [[ -n "$port" && -n "$fqbn" ]]; then
-            echo "$port" > "$CONFIG_DIR/port.txt"
-            echo "$fqbn" > "$CONFIG_DIR/fqbn.txt"
-            info "Board detected on port $port with FQBN $fqbn"
-            FOUND_BOARD=1
-            break
-        fi
-    fi
-done < "$CONFIG_DIR/board_list.txt"
-
-if [ "$FOUND_BOARD" -eq 0 ]; then
-    error_exit "No Arduino board found."
+# Validate input
+if [[ -z "$port" || -z "$fqbn" ]]; then
+    error_exit "Port and FQBN are required."
 fi
 
-info "Board detection complete. Port and FQBN saved to config/port.txt and config/fqbn.txt."
+# Save to config files
+echo "$port" > "$CONFIG_DIR/port.txt"
+echo "$fqbn" > "$CONFIG_DIR/fqbn.txt"
+
+info "Port and FQBN saved to config directory."
 
 # === Step 9: Compile and upload sketch ===
 info "Compiling sketch..."
