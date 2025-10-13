@@ -396,9 +396,9 @@ class Assistant:
                                 self.current_state.update(new_state_partial)
                             if response.get('chat'):
                                 if self.console_mode:
-                                    print(f"AI: {response['chat']}")
+                                    print(f"Assistant: {response['chat']}")
                                 else:
-                                    self.conversation_history.append(f"AI: {response['chat']}")
+                                    self.conversation_history.append("Assistant: " + response['chat'])
                                 if response.get('commands'):
                                     print("Sending command to Arduino...")
                                     # Convert list of commands to XML format
