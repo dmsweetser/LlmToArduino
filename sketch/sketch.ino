@@ -12,10 +12,11 @@
 #define SHOOT_PIN 32
 #define BUZZER_PIN 33
 
-#define MOTOR_LEFT_FORWARD  25  // PWM pin for left motor forward
-#define MOTOR_LEFT_BACKWARD 26  // PWM pin for left motor backward
-#define MOTOR_RIGHT_FORWARD 27  // PWM pin for right motor forward
-#define MOTOR_RIGHT_BACKWARD 28 // PWM pin for right motor backward
+// === Motor Pins Configuration (Updated for your car shield) ===
+#define MOTOR_FRONT_LEFT_FORWARD  9   // PWM pin for front left motor forward
+#define MOTOR_FRONT_LEFT_BACKWARD 10  // PWM pin for front left motor backward
+#define MOTOR_FRONT_RIGHT_FORWARD 12  // PWM pin for front right motor forward
+#define MOTOR_FRONT_RIGHT_BACKWARD 13 // PWM pin for front right motor backward
 
 // === Sensor Pins ===
 #define LEFT_SENSOR 35
@@ -89,6 +90,7 @@ void sendResponse(String status, String message);
 void sendState();
 void sendCapabilities();
 void captureAndSendImage();
+void performSelfTest();
 
 // === Servo Control Functions ===
 void moveFixedServo(int angle);
@@ -129,10 +131,11 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
-  pinMode(MOTOR_LEFT_FORWARD, OUTPUT);
-  pinMode(MOTOR_LEFT_BACKWARD, OUTPUT);
-  pinMode(MOTOR_RIGHT_FORWARD, OUTPUT);
-  pinMode(MOTOR_RIGHT_BACKWARD, OUTPUT);
+  // Initialize motor pins
+  pinMode(MOTOR_FRONT_LEFT_FORWARD, OUTPUT);
+  pinMode(MOTOR_FRONT_LEFT_BACKWARD, OUTPUT);
+  pinMode(MOTOR_FRONT_RIGHT_FORWARD, OUTPUT);
+  pinMode(MOTOR_FRONT_RIGHT_BACKWARD, OUTPUT);
 
   // Initialize servos
   fixedServo.attach(FIXED_SERVO_PIN);
@@ -140,6 +143,10 @@ void setup() {
   moveFixedServo(90);
   moveTurnServo(90);
 
+  // Perform self-test on startup
+  Serial.println("Starting system self-test...");
+  performSelfTest();
+  
   // Initialize camera
   if (esp_camera_init(&camera_config) != ESP_OK) {
     Serial.println("Camera initialization failed!");
@@ -223,6 +230,109 @@ void loop() {
     } else {
       inputBuffer += inChar;
     }
+  }
+}
+
+// === Self-Test Function ===
+void performSelfTest() {
+  // Test LED
+  Serial.println("Testing LED...");
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(500);
+  digitalWrite(LED_BUILTIN, LOW);
+  delay(500);
+  Serial.println("LED test passed");
+
+  // Test servos
+  Serial.println("Testing servos...");
+  moveFixedServo(0);
+  delay(1000);
+  moveFixedServo(90);
+  delay(1000);
+  moveFixedServo(180);
+  delay(1000);
+  moveFixedServo(90);
+  Serial.println("Servo test passed");
+
+  // Test buzzer
+  Serial.println("Testing buzzer...");
+  tone(BUZZER_PIN, 1000);
+  delay(500);
+  noTone(BUZZER_PIN);
+  delay(500);
+  tone(BUZZER_PIN, 500);
+  delay(500);
+  noTone(BUZZER_PIN);
+  Serial.println("Buzzer test passed");
+
+  // Test camera
+  Serial.println("Testing camera...");
+  if (esp_camera_init(&camera_config) == ESP_OK) {
+    Serial.println("Camera test passed");
+    isCameraActive = true;
+    // Capture a test image
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (fb) {
+      esp_camera_fb_return(fb);
+      Serial.println("Camera image capture test passed");
+    } else {
+      Serial.println("Camera image capture test failed");
+    }
+  } else {
+    Serial.println("Camera test failed");
+    isCameraActive = false;
+  }
+
+  // Test motors - move forward
+  Serial.println("Testing motors (forward)...");
+  moveForward(100);
+  delay(1000);
+  moveStop();
+  Serial.println("Motor forward test passed");
+
+  // Test motors - move backward
+  Serial.println("Testing motors (backward)...");
+  moveBackward(100);
+  delay(1000);
+  moveStop();
+  Serial.println("Motor backward test passed");
+
+  // Test motors - turn left
+  Serial.println("Testing motors (left turn)...");
+  moveLeft(100);
+  delay(1000);
+  moveStop();
+  Serial.println("Motor left turn test passed");
+
+  // Test motors - turn right
+  Serial.println("Testing motors (right turn)...");
+  moveRight(100);
+  delay(1000);
+  moveStop();
+  Serial.println("Motor right turn test passed");
+
+  // Test shooting mechanism
+  Serial.println("Testing shooting mechanism...");
+  triggerShoot();
+  Serial.println("Shooting test passed");
+
+  // Test ultrasonic sensor
+  Serial.println("Testing ultrasonic sensor...");
+  int distance = readUltrasonic();
+  if (distance > 0 && distance < 200) {
+    Serial.println("Ultrasonic sensor test passed. Distance: " + String(distance) + " cm");
+  } else {
+    Serial.println("Ultrasonic sensor test failed. Distance: " + String(distance) + " cm");
+  }
+
+  // Test IR sensors
+  Serial.println("Testing IR sensors...");
+  readIRSensors();
+  if (leftSensorValue > 100 && middleSensorValue > 100 && rightSensorValue > 100) {
+    Serial.println("IR sensors test passed");
+  } else {
+    Serial.println("IR sensors test failed. Values - Left: " + String(leftSensorValue) + 
+                   ", Middle: " + String(middleSensorValue) + ", Right: " + String(rightSensorValue));
   }
 }
 
@@ -373,16 +483,15 @@ void move(String params) {
   }
 }
 
-// === Motor Control Functions ===
 void moveForward(int speed) {
   // Ensure speed is within 0-255 range
   speed = constrain(speed, 0, 255);
 
-  analogWrite(MOTOR_LEFT_FORWARD, speed);
-  analogWrite(MOTOR_LEFT_BACKWARD, 0);
+  analogWrite(MOTOR_FRONT_LEFT_FORWARD, speed);
+  analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
 
-  analogWrite(MOTOR_RIGHT_FORWARD, speed);
-  analogWrite(MOTOR_RIGHT_BACKWARD, 0);
+  analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
+  analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
 
   Serial.println("Moving forward at speed " + String(speed));
 }
@@ -390,11 +499,11 @@ void moveForward(int speed) {
 void moveBackward(int speed) {
   speed = constrain(speed, 0, 255);
 
-  analogWrite(MOTOR_LEFT_FORWARD, 0);
-  analogWrite(MOTOR_LEFT_BACKWARD, speed);
+  analogWrite(MOTOR_FRONT_LEFT_FORWARD, 0);
+  analogWrite(MOTOR_FRONT_LEFT_BACKWARD, speed);
 
-  analogWrite(MOTOR_RIGHT_FORWARD, 0);
-  analogWrite(MOTOR_RIGHT_BACKWARD, speed);
+  analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
+  analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
 
   Serial.println("Moving backward at speed " + String(speed));
 }
@@ -402,11 +511,11 @@ void moveBackward(int speed) {
 void moveLeft(int speed) {
   speed = constrain(speed, 0, 255);
 
-  analogWrite(MOTOR_LEFT_FORWARD, 0);
-  analogWrite(MOTOR_LEFT_BACKWARD, speed);
+  analogWrite(MOTOR_FRONT_LEFT_FORWARD, 0);
+  analogWrite(MOTOR_FRONT_LEFT_BACKWARD, speed);
 
-  analogWrite(MOTOR_RIGHT_FORWARD, speed);
-  analogWrite(MOTOR_RIGHT_BACKWARD, 0);
+  analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
+  analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
 
   Serial.println("Turning left at speed " + String(speed));
 }
@@ -414,20 +523,20 @@ void moveLeft(int speed) {
 void moveRight(int speed) {
   speed = constrain(speed, 0, 255);
 
-  analogWrite(MOTOR_LEFT_FORWARD, speed);
-  analogWrite(MOTOR_LEFT_BACKWARD, 0);
+  analogWrite(MOTOR_FRONT_LEFT_FORWARD, speed);
+  analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
 
-  analogWrite(MOTOR_RIGHT_FORWARD, 0);
-  analogWrite(MOTOR_RIGHT_BACKWARD, speed);
+  analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
+  analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
 
   Serial.println("Turning right at speed " + String(speed));
 }
 
 void moveStop() {
-  analogWrite(MOTOR_LEFT_FORWARD, 0);
-  analogWrite(MOTOR_LEFT_BACKWARD, 0);
-  analogWrite(MOTOR_RIGHT_FORWARD, 0);
-  analogWrite(MOTOR_RIGHT_BACKWARD, 0);
+  analogWrite(MOTOR_FRONT_LEFT_FORWARD, 0);
+  analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
+  analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
+  analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
 
   Serial.println("Stopping");
 }
@@ -435,11 +544,11 @@ void moveStop() {
 void moveClockwise(int speed) {
   speed = constrain(speed, 0, 255);
 
-  analogWrite(MOTOR_LEFT_FORWARD, 0);
-  analogWrite(MOTOR_LEFT_BACKWARD, speed);
+  analogWrite(MOTOR_FRONT_LEFT_FORWARD, 0);
+  analogWrite(MOTOR_FRONT_LEFT_BACKWARD, speed);
 
-  analogWrite(MOTOR_RIGHT_FORWARD, 0);
-  analogWrite(MOTOR_RIGHT_BACKWARD, speed);
+  analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
+  analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
 
   Serial.println("Rotating clockwise at speed " + String(speed));
 }
@@ -447,11 +556,11 @@ void moveClockwise(int speed) {
 void moveCounterClockwise(int speed) {
   speed = constrain(speed, 0, 255);
 
-  analogWrite(MOTOR_LEFT_FORWARD, speed);
-  analogWrite(MOTOR_LEFT_BACKWARD, 0);
+  analogWrite(MOTOR_FRONT_LEFT_FORWARD, speed);
+  analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
 
-  analogWrite(MOTOR_RIGHT_FORWARD, speed);
-  analogWrite(MOTOR_RIGHT_BACKWARD, 0);
+  analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
+  analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
 
   Serial.println("Rotating counter-clockwise at speed " + String(speed));
 }
