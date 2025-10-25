@@ -12,6 +12,11 @@
 #define SHOOT_PIN 32
 #define BUZZER_PIN 33
 
+#define MOTOR_LEFT_FORWARD  25  // PWM pin for left motor forward
+#define MOTOR_LEFT_BACKWARD 26  // PWM pin for left motor backward
+#define MOTOR_RIGHT_FORWARD 27  // PWM pin for right motor forward
+#define MOTOR_RIGHT_BACKWARD 28 // PWM pin for right motor backward
+
 // === Sensor Pins ===
 #define LEFT_SENSOR 35
 #define MIDDLE_SENSOR 36
@@ -124,6 +129,11 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
+  pinMode(MOTOR_LEFT_FORWARD, OUTPUT);
+  pinMode(MOTOR_LEFT_BACKWARD, OUTPUT);
+  pinMode(MOTOR_RIGHT_FORWARD, OUTPUT);
+  pinMode(MOTOR_RIGHT_BACKWARD, OUTPUT);
+
   // Initialize servos
   fixedServo.attach(FIXED_SERVO_PIN);
   turnServo.attach(TURN_SERVO_PIN);
@@ -142,19 +152,46 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.begin("hackme", "password");
   
-  // Wait for WiFi connection
+  // Wait for WiFi connection with serial monitoring
+  unsigned long startTime = millis();
+  const int maxWaitTime = 30000; // 30 second timeout
+  
+  Serial.println("Attempting to connect to WiFi...");
+  
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    // Check if 30 seconds have passed
+    if (millis() - startTime >= maxWaitTime) {
+      Serial.println("WiFi connection timeout after 30 seconds");
+      break;
+    }
+    
+    // Check for serial input every 100ms
+    if (Serial.available() > 0) {
+      char inChar = (char)Serial.read();
+      if (inChar == '\n') {
+        // Process any commands from serial
+        processInput(inputBuffer);
+        inputBuffer = "";
+      } else {
+        inputBuffer += inChar;
+      }
+    }
+    
+    delay(100);
     Serial.print(".");
   }
   
-  Serial.println("\nWiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-
-  // Start the WiFi server after successful connection
-  server.begin();
-  Serial.println("WiFi server started");
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+    
+    // Start the WiFi server after successful connection
+    server.begin();
+    Serial.println("WiFi server started");
+  } else {
+    Serial.println("\nWiFi connection failed");
+  }
 
   moveStop();
   Serial.println("System ready. Ready to receive serial commands.");
@@ -336,35 +373,86 @@ void move(String params) {
   }
 }
 
+// === Motor Control Functions ===
 void moveForward(int speed) {
-  moveStop();
+  // Ensure speed is within 0-255 range
+  speed = constrain(speed, 0, 255);
+
+  analogWrite(MOTOR_LEFT_FORWARD, speed);
+  analogWrite(MOTOR_LEFT_BACKWARD, 0);
+
+  analogWrite(MOTOR_RIGHT_FORWARD, speed);
+  analogWrite(MOTOR_RIGHT_BACKWARD, 0);
+
   Serial.println("Moving forward at speed " + String(speed));
 }
 
 void moveBackward(int speed) {
-  moveStop();
+  speed = constrain(speed, 0, 255);
+
+  analogWrite(MOTOR_LEFT_FORWARD, 0);
+  analogWrite(MOTOR_LEFT_BACKWARD, speed);
+
+  analogWrite(MOTOR_RIGHT_FORWARD, 0);
+  analogWrite(MOTOR_RIGHT_BACKWARD, speed);
+
   Serial.println("Moving backward at speed " + String(speed));
 }
 
 void moveLeft(int speed) {
-  moveStop();
+  speed = constrain(speed, 0, 255);
+
+  analogWrite(MOTOR_LEFT_FORWARD, 0);
+  analogWrite(MOTOR_LEFT_BACKWARD, speed);
+
+  analogWrite(MOTOR_RIGHT_FORWARD, speed);
+  analogWrite(MOTOR_RIGHT_BACKWARD, 0);
+
   Serial.println("Turning left at speed " + String(speed));
 }
 
 void moveRight(int speed) {
-  moveStop();
+  speed = constrain(speed, 0, 255);
+
+  analogWrite(MOTOR_LEFT_FORWARD, speed);
+  analogWrite(MOTOR_LEFT_BACKWARD, 0);
+
+  analogWrite(MOTOR_RIGHT_FORWARD, 0);
+  analogWrite(MOTOR_RIGHT_BACKWARD, speed);
+
   Serial.println("Turning right at speed " + String(speed));
 }
 
 void moveStop() {
+  analogWrite(MOTOR_LEFT_FORWARD, 0);
+  analogWrite(MOTOR_LEFT_BACKWARD, 0);
+  analogWrite(MOTOR_RIGHT_FORWARD, 0);
+  analogWrite(MOTOR_RIGHT_BACKWARD, 0);
+
   Serial.println("Stopping");
 }
 
 void moveClockwise(int speed) {
+  speed = constrain(speed, 0, 255);
+
+  analogWrite(MOTOR_LEFT_FORWARD, 0);
+  analogWrite(MOTOR_LEFT_BACKWARD, speed);
+
+  analogWrite(MOTOR_RIGHT_FORWARD, 0);
+  analogWrite(MOTOR_RIGHT_BACKWARD, speed);
+
   Serial.println("Rotating clockwise at speed " + String(speed));
 }
 
 void moveCounterClockwise(int speed) {
+  speed = constrain(speed, 0, 255);
+
+  analogWrite(MOTOR_LEFT_FORWARD, speed);
+  analogWrite(MOTOR_LEFT_BACKWARD, 0);
+
+  analogWrite(MOTOR_RIGHT_FORWARD, speed);
+  analogWrite(MOTOR_RIGHT_BACKWARD, 0);
+
   Serial.println("Rotating counter-clockwise at speed " + String(speed));
 }
 
