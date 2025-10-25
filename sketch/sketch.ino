@@ -91,6 +91,7 @@ void sendState();
 void sendCapabilities();
 void captureAndSendImage();
 void performSelfTest();
+void debugPrint(const char* message);
 
 // === Servo Control Functions ===
 void moveFixedServo(int angle);
@@ -121,10 +122,23 @@ void stopCamera();
 
 // === Setup Function ===
 void setup() {
+  // Initialize serial communication at 115200 baud rate
   Serial.begin(115200);
+  delay(1000); // Wait for serial port to initialize
+  
+  debugPrint("ESP32 Serial started at 115200 baud");
+  
+  // Set up LED pin
   pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH); // Turn on LED to indicate boot
+  delay(100);
+  digitalWrite(LED_BUILTIN, LOW);
+  
+  // Set up output pins
   pinMode(SHOOT_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
+  
+  // Set up input pins
   pinMode(LEFT_SENSOR, INPUT);
   pinMode(MIDDLE_SENSOR, INPUT);
   pinMode(RIGHT_SENSOR, INPUT);
@@ -144,18 +158,21 @@ void setup() {
   moveTurnServo(90);
 
   // Perform self-test on startup
-  Serial.println("Starting system self-test...");
+  debugPrint("Starting system self-test...");
   performSelfTest();
   
   // Initialize camera
+  debugPrint("Initializing camera...");
   if (esp_camera_init(&camera_config) != ESP_OK) {
-    Serial.println("Camera initialization failed!");
+    debugPrint("Camera initialization failed!");
+    isCameraActive = false;
   } else {
-    Serial.println("Camera initialized successfully");
+    debugPrint("Camera initialized successfully");
     isCameraActive = true;
   }
   
   // Start WiFi
+  debugPrint("Starting WiFi...");
   WiFi.mode(WIFI_STA);
   WiFi.begin("hackme", "password");
   
@@ -163,12 +180,12 @@ void setup() {
   unsigned long startTime = millis();
   const int maxWaitTime = 30000; // 30 second timeout
   
-  Serial.println("Attempting to connect to WiFi...");
+  debugPrint("Attempting to connect to WiFi...");
   
   while (WiFi.status() != WL_CONNECTED) {
     // Check if 30 seconds have passed
     if (millis() - startTime >= maxWaitTime) {
-      Serial.println("WiFi connection timeout after 30 seconds");
+      debugPrint("WiFi connection timeout after 30 seconds");
       break;
     }
     
@@ -185,23 +202,23 @@ void setup() {
     }
     
     delay(100);
-    Serial.print(".");
+    debugPrint(".");
   }
   
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
+    debugPrint("\nWiFi connected");
+    debugPrint("IP address: ");
+    debugPrint(WiFi.localIP().toString().c_str());
     
     // Start the WiFi server after successful connection
     server.begin();
-    Serial.println("WiFi server started");
+    debugPrint("WiFi server started");
   } else {
-    Serial.println("\nWiFi connection failed");
+    debugPrint("\nWiFi connection failed");
   }
 
   moveStop();
-  Serial.println("System ready. Ready to receive serial commands.");
+  debugPrint("System ready. Ready to receive serial commands.");
 }
 
 // === Main Loop ===
@@ -233,18 +250,24 @@ void loop() {
   }
 }
 
+// === Debug Function ===
+void debugPrint(const char* message) {
+  Serial.print(message);
+  Serial.flush(); // Ensure immediate output
+}
+
 // === Self-Test Function ===
 void performSelfTest() {
   // Test LED
-  Serial.println("Testing LED...");
+  debugPrint("Testing LED...");
   digitalWrite(LED_BUILTIN, HIGH);
   delay(500);
   digitalWrite(LED_BUILTIN, LOW);
   delay(500);
-  Serial.println("LED test passed");
+  debugPrint("LED test passed");
 
   // Test servos
-  Serial.println("Testing servos...");
+  debugPrint("Testing servos...");
   moveFixedServo(0);
   delay(1000);
   moveFixedServo(90);
@@ -252,10 +275,10 @@ void performSelfTest() {
   moveFixedServo(180);
   delay(1000);
   moveFixedServo(90);
-  Serial.println("Servo test passed");
+  debugPrint("Servo test passed");
 
   // Test buzzer
-  Serial.println("Testing buzzer...");
+  debugPrint("Testing buzzer...");
   tone(BUZZER_PIN, 1000);
   delay(500);
   noTone(BUZZER_PIN);
@@ -263,76 +286,84 @@ void performSelfTest() {
   tone(BUZZER_PIN, 500);
   delay(500);
   noTone(BUZZER_PIN);
-  Serial.println("Buzzer test passed");
+  debugPrint("Buzzer test passed");
 
   // Test camera
-  Serial.println("Testing camera...");
+  debugPrint("Testing camera...");
   if (esp_camera_init(&camera_config) == ESP_OK) {
-    Serial.println("Camera test passed");
+    debugPrint("Camera test passed");
     isCameraActive = true;
     // Capture a test image
     camera_fb_t *fb = esp_camera_fb_get();
     if (fb) {
       esp_camera_fb_return(fb);
-      Serial.println("Camera image capture test passed");
+      debugPrint("Camera image capture test passed");
     } else {
-      Serial.println("Camera image capture test failed");
+      debugPrint("Camera image capture test failed");
     }
   } else {
-    Serial.println("Camera test failed");
+    debugPrint("Camera test failed");
     isCameraActive = false;
   }
 
   // Test motors - move forward
-  Serial.println("Testing motors (forward)...");
+  debugPrint("Testing motors (forward)...");
   moveForward(100);
   delay(1000);
   moveStop();
-  Serial.println("Motor forward test passed");
+  debugPrint("Motor forward test passed");
 
   // Test motors - move backward
-  Serial.println("Testing motors (backward)...");
+  debugPrint("Testing motors (backward)...");
   moveBackward(100);
   delay(1000);
   moveStop();
-  Serial.println("Motor backward test passed");
+  debugPrint("Motor backward test passed");
 
   // Test motors - turn left
-  Serial.println("Testing motors (left turn)...");
+  debugPrint("Testing motors (left turn)...");
   moveLeft(100);
   delay(1000);
   moveStop();
-  Serial.println("Motor left turn test passed");
+  debugPrint("Motor left turn test passed");
 
   // Test motors - turn right
-  Serial.println("Testing motors (right turn)...");
+  debugPrint("Testing motors (right turn)...");
   moveRight(100);
   delay(1000);
   moveStop();
-  Serial.println("Motor right turn test passed");
+  debugPrint("Motor right turn test passed");
 
   // Test shooting mechanism
-  Serial.println("Testing shooting mechanism...");
+  debugPrint("Testing shooting mechanism...");
   triggerShoot();
-  Serial.println("Shooting test passed");
+  debugPrint("Shooting test passed");
 
   // Test ultrasonic sensor
-  Serial.println("Testing ultrasonic sensor...");
+  debugPrint("Testing ultrasonic sensor...");
   int distance = readUltrasonic();
   if (distance > 0 && distance < 200) {
-    Serial.println("Ultrasonic sensor test passed. Distance: " + String(distance) + " cm");
+    debugPrint("Ultrasonic sensor test passed. Distance: ");
+    debugPrint(String(distance).c_str());
+    debugPrint(" cm");
   } else {
-    Serial.println("Ultrasonic sensor test failed. Distance: " + String(distance) + " cm");
+    debugPrint("Ultrasonic sensor test failed. Distance: ");
+    debugPrint(String(distance).c_str());
+    debugPrint(" cm");
   }
 
   // Test IR sensors
-  Serial.println("Testing IR sensors...");
+  debugPrint("Testing IR sensors...");
   readIRSensors();
   if (leftSensorValue > 100 && middleSensorValue > 100 && rightSensorValue > 100) {
-    Serial.println("IR sensors test passed");
+    debugPrint("IR sensors test passed");
   } else {
-    Serial.println("IR sensors test failed. Values - Left: " + String(leftSensorValue) + 
-                   ", Middle: " + String(middleSensorValue) + ", Right: " + String(rightSensorValue));
+    debugPrint("IR sensors test failed. Values - Left: ");
+    debugPrint(String(leftSensorValue).c_str());
+    debugPrint(", Middle: ");
+    debugPrint(String(middleSensorValue).c_str());
+    debugPrint(", Right: ");
+    debugPrint(String(rightSensorValue).c_str());
   }
 }
 
@@ -390,6 +421,7 @@ void processCommand(String command, String params) {
 void sendResponse(String status, String message) {
   String response = status + ":" + message + "\n";
   Serial.print(response);
+  Serial.flush(); // Ensure immediate output
 }
 
 void sendState() {
@@ -407,6 +439,7 @@ void sendState() {
   state += "is_shooting:" + String(isShooting) + "\n";
   state += "is_buzzer_playing:" + String(isBuzzerPlaying) + "\n";
   Serial.print(state);
+  Serial.flush();
 }
 
 void sendCapabilities() {
@@ -427,6 +460,7 @@ void sendCapabilities() {
     "snapshot:\n";  // Added snapshot command
 
   Serial.print(capabilitiesStr);
+  Serial.flush();
 }
 
 void getStatus() {
@@ -439,6 +473,7 @@ void getSensorData() {
   sensorData += "middle_sensor:" + String(middleSensorValue) + "\n";
   sensorData += "right_sensor:" + String(rightSensorValue) + "\n";
   Serial.print(sensorData);
+  Serial.flush();
 }
 
 void echo(String params) {
@@ -493,7 +528,8 @@ void moveForward(int speed) {
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
 
-  Serial.println("Moving forward at speed " + String(speed));
+  debugPrint("Moving forward at speed ");
+  debugPrint(String(speed).c_str());
 }
 
 void moveBackward(int speed) {
@@ -505,7 +541,8 @@ void moveBackward(int speed) {
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
 
-  Serial.println("Moving backward at speed " + String(speed));
+  debugPrint("Moving backward at speed ");
+  debugPrint(String(speed).c_str());
 }
 
 void moveLeft(int speed) {
@@ -517,7 +554,8 @@ void moveLeft(int speed) {
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
 
-  Serial.println("Turning left at speed " + String(speed));
+  debugPrint("Turning left at speed ");
+  debugPrint(String(speed).c_str());
 }
 
 void moveRight(int speed) {
@@ -529,7 +567,8 @@ void moveRight(int speed) {
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
 
-  Serial.println("Turning right at speed " + String(speed));
+  debugPrint("Turning right at speed ");
+  debugPrint(String(speed).c_str());
 }
 
 void moveStop() {
@@ -538,7 +577,7 @@ void moveStop() {
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
 
-  Serial.println("Stopping");
+  debugPrint("Stopping");
 }
 
 void moveClockwise(int speed) {
@@ -550,7 +589,8 @@ void moveClockwise(int speed) {
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
 
-  Serial.println("Rotating clockwise at speed " + String(speed));
+  debugPrint("Rotating clockwise at speed ");
+  debugPrint(String(speed).c_str());
 }
 
 void moveCounterClockwise(int speed) {
@@ -562,7 +602,8 @@ void moveCounterClockwise(int speed) {
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
 
-  Serial.println("Rotating counter-clockwise at speed " + String(speed));
+  debugPrint("Rotating counter-clockwise at speed ");
+  debugPrint(String(speed).c_str());
 }
 
 // === Servo Control Functions ===
@@ -584,12 +625,16 @@ void setServoAngle(int angle) {
 
 void moveFixedServo(int angle) {
   fixedServo.write(angle);
-  Serial.println("Fixed servo moved to " + String(angle) + " degrees");
+  debugPrint("Fixed servo moved to ");
+  debugPrint(String(angle).c_str());
+  debugPrint(" degrees");
 }
 
 void moveTurnServo(int angle) {
   turnServo.write(angle);
-  Serial.println("Turn servo moved to " + String(angle) + " degrees");
+  debugPrint("Turn servo moved to ");
+  debugPrint(String(angle).c_str());
+  debugPrint(" degrees");
 }
 
 // === Actuator Functions ===
@@ -609,7 +654,7 @@ void triggerShoot() {
   digitalWrite(SHOOT_PIN, HIGH);
   delay(shootDuration);
   digitalWrite(SHOOT_PIN, LOW);
-  Serial.println("Shooting completed");
+  debugPrint("Shooting completed");
 }
 
 void buzzer(String params) {
@@ -637,7 +682,11 @@ void playBuzzer(int buzzerTone, int duration) {
   tone(BUZZER_PIN, buzzerTone);
   delay(duration);
   noTone(BUZZER_PIN);
-  Serial.println("Buzzer played tone " + String(buzzerTone) + " for " + String(duration) + "ms");
+  debugPrint("Buzzer played tone ");
+  debugPrint(String(buzzerTone).c_str());
+  debugPrint(" for ");
+  debugPrint(String(duration).c_str());
+  debugPrint("ms");
 }
 
 // === Camera Functions ===
@@ -656,7 +705,7 @@ void camera(String params) {
 void startCamera() {
   if (esp_camera_init(&camera_config) == ESP_OK) {
     isCameraActive = true;
-    Serial.println("Camera started");
+    debugPrint("Camera started");
   } else {
     sendResponse("ERROR", "Camera failed to start");
   }
@@ -664,7 +713,7 @@ void startCamera() {
 
 void stopCamera() {
   isCameraActive = false;
-  Serial.println("Camera stopped");
+  debugPrint("Camera stopped");
 }
 
 // === Capture and Send Image via Serial ===
@@ -674,7 +723,7 @@ void captureAndSendImage() {
     return;
   }
 
-  Serial.println("Capturing image...");
+  debugPrint("Capturing image...");
 
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) {
@@ -695,7 +744,7 @@ void captureAndSendImage() {
   Serial.write('E');  // End of image marker
 
   esp_camera_fb_return(fb);
-  Serial.println("Image sent over serial");
+  debugPrint("Image sent over serial");
 }
 
 // === Tracking, Avoidance, Follow, Stop ===
@@ -754,7 +803,7 @@ void readIRSensors() {
 void handleWiFiClients() {
   WiFiClient client = server.available();
   if (client) {
-    Serial.println("Client connected");
+    debugPrint("Client connected");
     
     while (client.connected()) {
       if (client.available()) {
@@ -780,7 +829,7 @@ void handleWiFiClients() {
       delay(1);
     }
     
-    Serial.println("Client disconnected");
+    debugPrint("Client disconnected");
     client.stop();
   }
 }
