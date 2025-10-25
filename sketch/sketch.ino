@@ -11,8 +11,6 @@
 #define TURN_SERVO_PIN 26
 #define SHOOT_PIN 32
 #define BUZZER_PIN 33
-#define LED_MODULE1 2
-#define LED_MODULE2 12
 
 // === Sensor Pins ===
 #define LEFT_SENSOR 35
@@ -60,8 +58,6 @@ bool isAvoiding = false;
 bool isFollowing = false;
 bool isShooting = false;
 bool isBuzzerPlaying = false;
-bool isLED1On = false;
-bool isLED2On = false;
 int servoAngle = 90;
 int shootDuration = 200;
 int buzzerTone = 0;
@@ -87,7 +83,6 @@ void processCommand(String command, String params);
 void sendResponse(String status, String message);
 void sendState();
 void sendCapabilities();
-void updateLEDs();
 void captureAndSendImage();
 
 // === Servo Control Functions ===
@@ -112,10 +107,6 @@ void moveCounterClockwise(int speed);
 // === Actuator Functions ===
 void triggerShoot();
 void playBuzzer(int tone, int duration);
-void toggleLED1();
-void toggleLED2();
-void setLED1(bool state);
-void setLED2(bool state);
 
 // === Camera Functions ===
 void startCamera();
@@ -127,8 +118,6 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(SHOOT_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(LED_MODULE1, OUTPUT);
-  pinMode(LED_MODULE2, OUTPUT);
   pinMode(LEFT_SENSOR, INPUT);
   pinMode(MIDDLE_SENSOR, INPUT);
   pinMode(RIGHT_SENSOR, INPUT);
@@ -153,6 +142,7 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.begin("hackme", "password");
   
+  // Wait for WiFi connection
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -162,6 +152,9 @@ void setup() {
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
+  // Start the WiFi server after successful connection
+  server.begin();
+  Serial.println("WiFi server started");
 
   moveStop();
   Serial.println("System ready. Ready to receive serial commands.");
@@ -169,7 +162,6 @@ void setup() {
 
 // === Main Loop ===
 void loop() {
-
   // Handle WiFi client connections
   handleWiFiClients();
   
@@ -316,7 +308,6 @@ void setLED(String params) {
   }
 }
 
-
 // === Motor Control Functions ===
 void move(String params) {
   if (params == "forward") {
@@ -451,8 +442,6 @@ void playBuzzer(int buzzerTone, int duration) {
   noTone(BUZZER_PIN);
   Serial.println("Buzzer played tone " + String(buzzerTone) + " for " + String(duration) + "ms");
 }
-
-
 
 // === Camera Functions ===
 void camera(String params) {
