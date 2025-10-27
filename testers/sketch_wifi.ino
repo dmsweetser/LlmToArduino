@@ -1,15 +1,12 @@
-#include <BluetoothSerial.h>
-#include <WiFi.h> // Only needed for camera, kept for compatibility
+// This script isn't currently working - retained for reference only.
+
+#include <WiFi.h>
 #include "esp_camera.h"
 #include <Arduino.h>
 
 // === Configuration ===
 #define CAMERA_MODEL_AI_THINKER
 #define LED_BUILTIN 2
-
-// === Camera UART Pins (Use non-Bluetooth pins) ===
-#define CAM_TX_PIN 16
-#define CAM_RX_PIN 17
 
 // === Pins Configuration ===
 #define FIXED_SERVO_PIN 25
@@ -30,8 +27,7 @@
 #define TRIG_PIN 9
 #define ECHO_PIN 8
 
-// === Bluetooth Serial ===
-BluetoothSerial SerialBT;
+WiFiServer server(100);
 
 // === Camera Configuration ===
 camera_config_t camera_config = {
@@ -131,19 +127,19 @@ void setup() {
   // Initialize serial communication at 115200 baud rate
   Serial.begin(115200);
   delay(1000); // Wait for serial port to initialize
-
+  
   debugPrint("ESP32 Serial started at 115200 baud");
-
+  
   // Set up LED pin
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH); // Turn on LED to indicate boot
   delay(100);
   digitalWrite(LED_BUILTIN, LOW);
-
+  
   // Set up output pins
   pinMode(SHOOT_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
-
+  
   // Set up input pins
   pinMode(LEFT_SENSOR, INPUT);
   pinMode(MIDDLE_SENSOR, INPUT);
@@ -166,7 +162,7 @@ void setup() {
   // Perform self-test on startup
   debugPrint("Starting system self-test...");
   performSelfTest();
-
+  
   // Initialize camera
   debugPrint("Initializing camera...");
   if (esp_camera_init(&camera_config) != ESP_OK) {
@@ -176,24 +172,62 @@ void setup() {
     debugPrint("Camera initialized successfully");
     isCameraActive = true;
   }
-
-  // Initialize Bluetooth Serial
-  SerialBT.begin("ESP32-Camera-Rover"); // Bluetooth device name
-  debugPrint("Bluetooth Serial started");
-  debugPrint("Device name: ESP32-Camera-Rover");
-
-  // Optional: Set pairing code or make discoverable
-  // BluetoothSerial uses default pairing, but you can set PIN if needed
+  
+  // Start WiFi
+  debugPrint("Starting WiFi...");
+  WiFi.mode(WIFI_STA);
+  WiFi.begin("hackme", "password");
+  
+  // Wait for WiFi connection with serial monitoring
+  unsigned long startTime = millis();
+  const int maxWaitTime = 30000; // 30 second timeout
+  
+  debugPrint("Attempting to connect to WiFi...");
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    // Check if 30 seconds have passed
+    if (millis() - startTime >= maxWaitTime) {
+      debugPrint("WiFi connection timeout after 30 seconds");
+      break;
+    }
+    
+    // Check for serial input every 100ms
+    if (Serial.available() > 0) {
+      char inChar = (char)Serial.read();
+      if (inChar == '\n') {
+        // Process any commands from serial
+        processInput(inputBuffer);
+        inputBuffer = "";
+      } else {
+        inputBuffer += inChar;
+      }
+    }
+    
+    delay(100);
+    debugPrint(".");
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    debugPrint("\nWiFi connected");
+    debugPrint("IP address: ");
+    debugPrint(WiFi.localIP().toString().c_str());
+    
+    // Start the WiFi server after successful connection
+    server.begin();
+    debugPrint("WiFi server started");
+  } else {
+    debugPrint("\nWiFi connection failed");
+  }
 
   moveStop();
-  debugPrint("System ready. Ready to receive Bluetooth commands.");
+  debugPrint("System ready. Ready to receive serial commands.");
 }
 
 // === Main Loop ===
 void loop() {
-  // Handle Bluetooth client connection and commands
-  handleBluetoothClient();
-
+  // Handle WiFi client connections
+  handleWiFiClients();
+  
   // Update sensor data
   readUltrasonic();
   readIRSensors();
@@ -206,7 +240,7 @@ void loop() {
     digitalWrite(LED_BUILTIN, ledState);
   }
 
-  // Process any incoming serial commands (for debugging, optional)
+  // Process any incoming serial commands
   while (Serial.available() > 0) {
     char inChar = (char)Serial.read();
     if (inChar == '\n') {
@@ -221,7 +255,7 @@ void loop() {
 // === Debug Function ===
 void debugPrint(const char* message) {
   Serial.print(message);
-  Serial.flush();
+  Serial.flush(); // Ensure immediate output
 }
 
 // === Self-Test Function ===
@@ -335,21 +369,6 @@ void performSelfTest() {
   }
 }
 
-// === Bluetooth Client Handling ===
-void handleBluetoothClient() {
-  if (SerialBT.available()) {
-    char c = SerialBT.read();
-    Serial.write(c); // Echo to serial for debugging
-
-    if (c == '\n') {
-      processInput(inputBuffer);
-      inputBuffer = "";
-    } else {
-      inputBuffer += c;
-    }
-  }
-}
-
 // === Command Processing Functions ===
 void processInput(String commandLine) {
   commandLine.trim();
@@ -403,8 +422,8 @@ void processCommand(String command, String params) {
 
 void sendResponse(String status, String message) {
   String response = status + ":" + message + "\n";
-  SerialBT.print(response);
-  SerialBT.flush(); // Ensure immediate output
+  Serial.print(response);
+  Serial.flush(); // Ensure immediate output
 }
 
 void sendState() {
@@ -421,8 +440,8 @@ void sendState() {
   state += "is_following:" + String(isFollowing) + "\n";
   state += "is_shooting:" + String(isShooting) + "\n";
   state += "is_buzzer_playing:" + String(isBuzzerPlaying) + "\n";
-  SerialBT.print(state);
-  SerialBT.flush();
+  Serial.print(state);
+  Serial.flush();
 }
 
 void sendCapabilities() {
@@ -440,10 +459,10 @@ void sendCapabilities() {
     "avoid:mode\n"
     "follow:mode\n"
     "stop:\n"
-    "snapshot:\n";
+    "snapshot:\n";  // Added snapshot command
 
-  SerialBT.print(capabilitiesStr);
-  SerialBT.flush();
+  Serial.print(capabilitiesStr);
+  Serial.flush();
 }
 
 void getStatus() {
@@ -455,8 +474,8 @@ void getSensorData() {
   sensorData += "left_sensor:" + String(leftSensorValue) + "\n";
   sensorData += "middle_sensor:" + String(middleSensorValue) + "\n";
   sensorData += "right_sensor:" + String(rightSensorValue) + "\n";
-  SerialBT.print(sensorData);
-  SerialBT.flush();
+  Serial.print(sensorData);
+  Serial.flush();
 }
 
 void echo(String params) {
@@ -502,41 +521,54 @@ void move(String params) {
 }
 
 void moveForward(int speed) {
+  // Ensure speed is within 0-255 range
   speed = constrain(speed, 0, 255);
+
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
+
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
+
   debugPrint("Moving forward at speed ");
   debugPrint(String(speed).c_str());
 }
 
 void moveBackward(int speed) {
   speed = constrain(speed, 0, 255);
+
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, speed);
+
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
+
   debugPrint("Moving backward at speed ");
   debugPrint(String(speed).c_str());
 }
 
 void moveLeft(int speed) {
   speed = constrain(speed, 0, 255);
+
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, speed);
+
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
+
   debugPrint("Turning left at speed ");
   debugPrint(String(speed).c_str());
 }
 
 void moveRight(int speed) {
   speed = constrain(speed, 0, 255);
+
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
+
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
+
   debugPrint("Turning right at speed ");
   debugPrint(String(speed).c_str());
 }
@@ -546,25 +578,32 @@ void moveStop() {
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
+
   debugPrint("Stopping");
 }
 
 void moveClockwise(int speed) {
   speed = constrain(speed, 0, 255);
+
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, speed);
+
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
+
   debugPrint("Rotating clockwise at speed ");
   debugPrint(String(speed).c_str());
 }
 
 void moveCounterClockwise(int speed) {
   speed = constrain(speed, 0, 255);
+
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
+
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
+
   debugPrint("Rotating counter-clockwise at speed ");
   debugPrint(String(speed).c_str());
 }
@@ -679,7 +718,7 @@ void stopCamera() {
   debugPrint("Camera stopped");
 }
 
-// === Capture and Send Image via Bluetooth ===
+// === Capture and Send Image via Serial ===
 void captureAndSendImage() {
   if (!isCameraActive) {
     sendResponse("ERROR", "Camera not active");
@@ -695,19 +734,19 @@ void captureAndSendImage() {
   }
 
   // Send JPEG data in chunks to avoid overflow
-  SerialBT.write('S');  // Start of image marker
-  SerialBT.write((fb->len >> 24) & 0xFF);
-  SerialBT.write((fb->len >> 16) & 0xFF);
-  SerialBT.write((fb->len >> 8) & 0xFF);
-  SerialBT.write(fb->len & 0xFF);
+  Serial.write('S');  // Start of image marker
+  Serial.write((fb->len >> 24) & 0xFF);
+  Serial.write((fb->len >> 16) & 0xFF);
+  Serial.write((fb->len >> 8) & 0xFF);
+  Serial.write(fb->len & 0xFF);
 
   // Send image data
-  SerialBT.write(fb->buf, fb->len);
+  Serial.write(fb->buf, fb->len);
 
-  SerialBT.write('E');  // End of image marker
+  Serial.write('E');  // End of image marker
 
   esp_camera_fb_return(fb);
-  debugPrint("Image sent over Bluetooth");
+  debugPrint("Image sent over serial");
 }
 
 // === Tracking, Avoidance, Follow, Stop ===
@@ -760,4 +799,39 @@ void readIRSensors() {
   leftSensorValue = analogRead(LEFT_SENSOR);
   middleSensorValue = analogRead(MIDDLE_SENSOR);
   rightSensorValue = analogRead(RIGHT_SENSOR);
+}
+
+// === WiFi Client Handling ===
+void handleWiFiClients() {
+  WiFiClient client = server.available();
+  if (client) {
+    debugPrint("Client connected");
+    
+    while (client.connected()) {
+      if (client.available()) {
+        char c = client.read();
+        Serial.write(c);
+        
+        // Process commands from WiFi client
+        if (c == '\n') {
+          processInput(inputBuffer);
+          inputBuffer = "";
+        } else {
+          inputBuffer += c;
+        }
+      }
+      
+      // Check for inactivity
+      if (millis() - lastBlinkTime > 10000) {
+        // Send status update every 10 seconds
+        sendState();
+        lastBlinkTime = millis();
+      }
+      
+      delay(1);
+    }
+    
+    debugPrint("Client disconnected");
+    client.stop();
+  }
 }
