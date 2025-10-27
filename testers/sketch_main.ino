@@ -1,12 +1,12 @@
-// This script isn't currently working - retained for reference only.
-
-#include <WiFi.h>
-#include "esp_camera.h"
+#include <BluetoothSerial.h>
 #include <Arduino.h>
 
 // === Configuration ===
-#define CAMERA_MODEL_AI_THINKER
 #define LED_BUILTIN 2
+
+// === Camera UART Pins (Now from external ESP32) ===
+#define CAM_TX_PIN 13  // Connected to RX on main ESP32
+#define CAM_RX_PIN 14  // Connected to TX on main ESP32
 
 // === Pins Configuration ===
 #define FIXED_SERVO_PIN 25
@@ -15,10 +15,10 @@
 #define BUZZER_PIN 33
 
 // === Motor Pins Configuration (Updated for your car shield) ===
-#define MOTOR_FRONT_LEFT_FORWARD  9   // PWM pin for front left motor forward
-#define MOTOR_FRONT_LEFT_BACKWARD 10  // PWM pin for front left motor backward
-#define MOTOR_FRONT_RIGHT_FORWARD 12  // PWM pin for front right motor forward
-#define MOTOR_FRONT_RIGHT_BACKWARD 13 // PWM pin for front right motor backward
+#define MOTOR_FRONT_LEFT_FORWARD  9
+#define MOTOR_FRONT_LEFT_BACKWARD 10
+#define MOTOR_FRONT_RIGHT_FORWARD 12
+#define MOTOR_FRONT_RIGHT_BACKWARD 13
 
 // === Sensor Pins ===
 #define LEFT_SENSOR 35
@@ -27,37 +27,8 @@
 #define TRIG_PIN 9
 #define ECHO_PIN 8
 
-WiFiServer server(100);
-
-// === Camera Configuration ===
-camera_config_t camera_config = {
-  .pin_pwdn = -1,
-  .pin_reset = -1,
-  .pin_xclk = 4,
-  .pin_sscb_sda = 18,
-  .pin_sscb_scl = 22,
-  .pin_d7 = 39,
-  .pin_d6 = 38,
-  .pin_d5 = 37,
-  .pin_d4 = 36,
-  .pin_d3 = 35,
-  .pin_d2 = 34,
-  .pin_d1 = 33,
-  .pin_d0 = 32,
-  .pin_vsync = 5,
-  .pin_href = 27,
-  .pin_pclk = 26,
-  .xclk_freq_hz = 20000000,
-  .pixel_format = PIXFORMAT_JPEG,
-  .frame_size = FRAMESIZE_QVGA,
-  .jpeg_quality = 12,
-  .fb_count = 1
-};
-
-// === Servo Configuration ===
-#include <ESP32Servo.h>
-Servo fixedServo;
-Servo turnServo;
+// === Bluetooth Serial ===
+BluetoothSerial SerialBT;
 
 // === Global Variables ===
 bool isCameraActive = false;
@@ -73,6 +44,9 @@ int buzzerDuration = 1000;
 int ledPacing = 1000;
 unsigned long lastBlinkTime = 0;
 bool ledState = LOW;
+#include <ESP32Servo.h>
+Servo fixedServo;
+Servo turnServo;
 
 // === Sensor Data ===
 int leftSensorValue = 0;
@@ -81,6 +55,16 @@ int rightSensorValue = 0;
 int ultrasonicDistance = 0;
 int temperature = 0;
 int humidity = 0;
+
+// === UART Buffer & Image Handling ===
+#define UART_BAUD_RATE 115200
+#define MAX_IMAGE_SIZE 60000
+uint8_t imageBuffer[MAX_IMAGE_SIZE];
+int imageIndex = 0;
+bool imageReceived = false;
+bool imageStarted = false;
+uint32_t expectedImageSize = 0;
+unsigned long lastImageTime = 0;
 
 // === Command Processing ===
 String inputBuffer = "";
@@ -91,7 +75,7 @@ void processCommand(String command, String params);
 void sendResponse(String status, String message);
 void sendState();
 void sendCapabilities();
-void captureAndSendImage();
+void captureAndSendImage(); // Now sends image from UART
 void performSelfTest();
 void debugPrint(const char* message);
 
@@ -118,28 +102,26 @@ void moveCounterClockwise(int speed);
 void triggerShoot();
 void playBuzzer(int tone, int duration);
 
-// === Camera Functions ===
-void startCamera();
-void stopCamera();
+// === UART Image Parser ===
+void handleUartImage();
 
 // === Setup Function ===
 void setup() {
-  // Initialize serial communication at 115200 baud rate
+  // Initialize serial communication at 115200 baud
   Serial.begin(115200);
-  delay(1000); // Wait for serial port to initialize
-  
+  delay(1000);
   debugPrint("ESP32 Serial started at 115200 baud");
-  
+
   // Set up LED pin
   pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH); // Turn on LED to indicate boot
+  digitalWrite(LED_BUILTIN, HIGH);
   delay(100);
   digitalWrite(LED_BUILTIN, LOW);
-  
+
   // Set up output pins
   pinMode(SHOOT_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
-  
+
   // Set up input pins
   pinMode(LEFT_SENSOR, INPUT);
   pinMode(MIDDLE_SENSOR, INPUT);
@@ -159,75 +141,31 @@ void setup() {
   moveFixedServo(90);
   moveTurnServo(90);
 
+  // Initialize UART to receive from camera ESP32
+  Serial2.begin(UART_BAUD_RATE, SERIAL_8N1, CAM_RX_PIN, CAM_TX_PIN);
+  debugPrint("UART (Serial2) initialized for camera communication");
+
+  // Initialize Bluetooth Serial
+  SerialBT.begin("ESP32-Camera-Rover");
+  debugPrint("Bluetooth Serial started");
+  debugPrint("Device name: ESP32-Camera-Rover");
+
   // Perform self-test on startup
   debugPrint("Starting system self-test...");
   performSelfTest();
-  
-  // Initialize camera
-  debugPrint("Initializing camera...");
-  if (esp_camera_init(&camera_config) != ESP_OK) {
-    debugPrint("Camera initialization failed!");
-    isCameraActive = false;
-  } else {
-    debugPrint("Camera initialized successfully");
-    isCameraActive = true;
-  }
-  
-  // Start WiFi
-  debugPrint("Starting WiFi...");
-  WiFi.mode(WIFI_STA);
-  WiFi.begin("hackme", "password");
-  
-  // Wait for WiFi connection with serial monitoring
-  unsigned long startTime = millis();
-  const int maxWaitTime = 30000; // 30 second timeout
-  
-  debugPrint("Attempting to connect to WiFi...");
-  
-  while (WiFi.status() != WL_CONNECTED) {
-    // Check if 30 seconds have passed
-    if (millis() - startTime >= maxWaitTime) {
-      debugPrint("WiFi connection timeout after 30 seconds");
-      break;
-    }
-    
-    // Check for serial input every 100ms
-    if (Serial.available() > 0) {
-      char inChar = (char)Serial.read();
-      if (inChar == '\n') {
-        // Process any commands from serial
-        processInput(inputBuffer);
-        inputBuffer = "";
-      } else {
-        inputBuffer += inChar;
-      }
-    }
-    
-    delay(100);
-    debugPrint(".");
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    debugPrint("\nWiFi connected");
-    debugPrint("IP address: ");
-    debugPrint(WiFi.localIP().toString().c_str());
-    
-    // Start the WiFi server after successful connection
-    server.begin();
-    debugPrint("WiFi server started");
-  } else {
-    debugPrint("\nWiFi connection failed");
-  }
 
   moveStop();
-  debugPrint("System ready. Ready to receive serial commands.");
+  debugPrint("System ready. Ready to receive Bluetooth commands.");
 }
 
 // === Main Loop ===
 void loop() {
-  // Handle WiFi client connections
-  handleWiFiClients();
-  
+  // Handle UART image data (from camera ESP32)
+  handleUartImage();
+
+  // Handle Bluetooth client commands
+  handleBluetoothClient();
+
   // Update sensor data
   readUltrasonic();
   readIRSensors();
@@ -240,7 +178,7 @@ void loop() {
     digitalWrite(LED_BUILTIN, ledState);
   }
 
-  // Process any incoming serial commands
+  // Process any incoming serial commands (for debugging)
   while (Serial.available() > 0) {
     char inChar = (char)Serial.read();
     if (inChar == '\n') {
@@ -255,7 +193,7 @@ void loop() {
 // === Debug Function ===
 void debugPrint(const char* message) {
   Serial.print(message);
-  Serial.flush(); // Ensure immediate output
+  Serial.flush();
 }
 
 // === Self-Test Function ===
@@ -289,24 +227,6 @@ void performSelfTest() {
   delay(500);
   noTone(BUZZER_PIN);
   debugPrint("Buzzer test passed");
-
-  // Test camera
-  debugPrint("Testing camera...");
-  if (esp_camera_init(&camera_config) == ESP_OK) {
-    debugPrint("Camera test passed");
-    isCameraActive = true;
-    // Capture a test image
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (fb) {
-      esp_camera_fb_return(fb);
-      debugPrint("Camera image capture test passed");
-    } else {
-      debugPrint("Camera image capture test failed");
-    }
-  } else {
-    debugPrint("Camera test failed");
-    isCameraActive = false;
-  }
 
   // Test motors - move forward
   debugPrint("Testing motors (forward)...");
@@ -369,6 +289,86 @@ void performSelfTest() {
   }
 }
 
+// === Bluetooth Client Handling ===
+void handleBluetoothClient() {
+  if (SerialBT.available()) {
+    char c = SerialBT.read();
+    Serial.write(c); // Echo to serial for debugging
+
+    if (c == '\n') {
+      processInput(inputBuffer);
+      inputBuffer = "";
+    } else {
+      inputBuffer += c;
+    }
+  }
+}
+
+// === UART Image Handler ===
+void handleUartImage() {
+  while (Serial2.available() > 0) {
+    char c = Serial2.read();
+
+    if (c == 'S' && !imageStarted) {
+      imageStarted = true;
+      imageIndex = 0;
+      expectedImageSize = 0;
+      debugPrint("📷 Image start detected");
+    } else if (imageStarted && imageIndex == 0) {
+      // Read 4-byte image length
+      expectedImageSize = (uint32_t(c) << 24);
+      imageIndex++;
+    } else if (imageStarted && imageIndex == 1) {
+      expectedImageSize |= (uint32_t(c) << 16);
+      imageIndex++;
+    } else if (imageStarted && imageIndex == 2) {
+      expectedImageSize |= (uint32_t(c) << 8);
+      imageIndex++;
+    } else if (imageStarted && imageIndex == 3) {
+      expectedImageSize |= (uint32_t(c));
+      imageIndex++;
+      debugPrint("📏 Expected image size: ");
+      debugPrint(String(expectedImageSize).c_str());
+      debugPrint(" bytes");
+    } else if (imageStarted && imageIndex > 3) {
+      if (imageIndex - 4 < MAX_IMAGE_SIZE) {
+        imageBuffer[imageIndex - 4] = c;
+      } else {
+        debugPrint("Image buffer overflow!");
+        imageStarted = false;
+        imageIndex = 0;
+        continue;
+      }
+
+      if (imageIndex - 4 >= expectedImageSize) {
+        // End of image received
+        if (c == 'E') {
+          imageReceived = true;
+          debugPrint("Full image received and stored");
+          lastImageTime = millis();
+          isCameraActive = true;
+        } else {
+          debugPrint("Unexpected end marker");
+        }
+        imageStarted = false;
+        imageIndex = 0;
+      }
+    }
+  }
+
+  // If image is ready, send it over Bluetooth
+  if (imageReceived && SerialBT.availableForWrite() > 0) {
+    // Send image over Bluetooth (chunked)
+    for (int i = 0; i < expectedImageSize; i++) {
+      SerialBT.write(imageBuffer[i]);
+    }
+    SerialBT.write('E'); // End marker
+    SerialBT.flush();
+    debugPrint("Image sent over Bluetooth");
+    imageReceived = false;
+  }
+}
+
 // === Command Processing Functions ===
 void processInput(String commandLine) {
   commandLine.trim();
@@ -414,7 +414,10 @@ void processCommand(String command, String params) {
   } else if (command == "stop") {
     stop();
   } else if (command == "snapshot") {
-    captureAndSendImage();
+    // Send command to camera ESP32 to capture
+    Serial2.write('C'); // Trigger capture
+    debugPrint("Sent 'C' to camera ESP32");
+    sendResponse("OK", "Snapshot requested");
   } else {
     sendResponse("ERROR", "Unknown command type");
   }
@@ -422,8 +425,8 @@ void processCommand(String command, String params) {
 
 void sendResponse(String status, String message) {
   String response = status + ":" + message + "\n";
-  Serial.print(response);
-  Serial.flush(); // Ensure immediate output
+  SerialBT.print(response);
+  SerialBT.flush();
 }
 
 void sendState() {
@@ -440,8 +443,8 @@ void sendState() {
   state += "is_following:" + String(isFollowing) + "\n";
   state += "is_shooting:" + String(isShooting) + "\n";
   state += "is_buzzer_playing:" + String(isBuzzerPlaying) + "\n";
-  Serial.print(state);
-  Serial.flush();
+  SerialBT.print(state);
+  SerialBT.flush();
 }
 
 void sendCapabilities() {
@@ -459,23 +462,14 @@ void sendCapabilities() {
     "avoid:mode\n"
     "follow:mode\n"
     "stop:\n"
-    "snapshot:\n";  // Added snapshot command
+    "snapshot:\n";
 
-  Serial.print(capabilitiesStr);
-  Serial.flush();
+  SerialBT.print(capabilitiesStr);
+  SerialBT.flush();
 }
 
 void getStatus() {
   sendState();
-}
-
-void getSensorData() {
-  String sensorData = "distance:" + String(ultrasonicDistance) + "\n";
-  sensorData += "left_sensor:" + String(leftSensorValue) + "\n";
-  sensorData += "middle_sensor:" + String(middleSensorValue) + "\n";
-  sensorData += "right_sensor:" + String(rightSensorValue) + "\n";
-  Serial.print(sensorData);
-  Serial.flush();
 }
 
 void echo(String params) {
@@ -521,54 +515,41 @@ void move(String params) {
 }
 
 void moveForward(int speed) {
-  // Ensure speed is within 0-255 range
   speed = constrain(speed, 0, 255);
-
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
-
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
-
   debugPrint("Moving forward at speed ");
   debugPrint(String(speed).c_str());
 }
 
 void moveBackward(int speed) {
   speed = constrain(speed, 0, 255);
-
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, speed);
-
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
-
   debugPrint("Moving backward at speed ");
   debugPrint(String(speed).c_str());
 }
 
 void moveLeft(int speed) {
   speed = constrain(speed, 0, 255);
-
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, speed);
-
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
-
   debugPrint("Turning left at speed ");
   debugPrint(String(speed).c_str());
 }
 
 void moveRight(int speed) {
   speed = constrain(speed, 0, 255);
-
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
-
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
-
   debugPrint("Turning right at speed ");
   debugPrint(String(speed).c_str());
 }
@@ -578,32 +559,25 @@ void moveStop() {
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
-
   debugPrint("Stopping");
 }
 
 void moveClockwise(int speed) {
   speed = constrain(speed, 0, 255);
-
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, speed);
-
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, 0);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, speed);
-
   debugPrint("Rotating clockwise at speed ");
   debugPrint(String(speed).c_str());
 }
 
 void moveCounterClockwise(int speed) {
   speed = constrain(speed, 0, 255);
-
   analogWrite(MOTOR_FRONT_LEFT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_LEFT_BACKWARD, 0);
-
   analogWrite(MOTOR_FRONT_RIGHT_FORWARD, speed);
   analogWrite(MOTOR_FRONT_RIGHT_BACKWARD, 0);
-
   debugPrint("Rotating counter-clockwise at speed ");
   debugPrint(String(speed).c_str());
 }
@@ -691,62 +665,15 @@ void playBuzzer(int buzzerTone, int duration) {
   debugPrint("ms");
 }
 
-// === Camera Functions ===
+// === Camera Functions (Now UART-based) ===
 void camera(String params) {
   if (params == "start") {
-    startCamera();
-    sendResponse("OK", "Camera started");
+    sendResponse("OK", "Camera ESP32 already running");
   } else if (params == "stop") {
-    stopCamera();
-    sendResponse("OK", "Camera stopped");
+    sendResponse("OK", "Camera ESP32 stopped");
   } else {
     sendResponse("ERROR", "Unknown camera action");
   }
-}
-
-void startCamera() {
-  if (esp_camera_init(&camera_config) == ESP_OK) {
-    isCameraActive = true;
-    debugPrint("Camera started");
-  } else {
-    sendResponse("ERROR", "Camera failed to start");
-  }
-}
-
-void stopCamera() {
-  isCameraActive = false;
-  debugPrint("Camera stopped");
-}
-
-// === Capture and Send Image via Serial ===
-void captureAndSendImage() {
-  if (!isCameraActive) {
-    sendResponse("ERROR", "Camera not active");
-    return;
-  }
-
-  debugPrint("Capturing image...");
-
-  camera_fb_t *fb = esp_camera_fb_get();
-  if (!fb) {
-    sendResponse("ERROR", "Failed to capture image");
-    return;
-  }
-
-  // Send JPEG data in chunks to avoid overflow
-  Serial.write('S');  // Start of image marker
-  Serial.write((fb->len >> 24) & 0xFF);
-  Serial.write((fb->len >> 16) & 0xFF);
-  Serial.write((fb->len >> 8) & 0xFF);
-  Serial.write(fb->len & 0xFF);
-
-  // Send image data
-  Serial.write(fb->buf, fb->len);
-
-  Serial.write('E');  // End of image marker
-
-  esp_camera_fb_return(fb);
-  debugPrint("Image sent over serial");
 }
 
 // === Tracking, Avoidance, Follow, Stop ===
@@ -799,39 +726,4 @@ void readIRSensors() {
   leftSensorValue = analogRead(LEFT_SENSOR);
   middleSensorValue = analogRead(MIDDLE_SENSOR);
   rightSensorValue = analogRead(RIGHT_SENSOR);
-}
-
-// === WiFi Client Handling ===
-void handleWiFiClients() {
-  WiFiClient client = server.available();
-  if (client) {
-    debugPrint("Client connected");
-    
-    while (client.connected()) {
-      if (client.available()) {
-        char c = client.read();
-        Serial.write(c);
-        
-        // Process commands from WiFi client
-        if (c == '\n') {
-          processInput(inputBuffer);
-          inputBuffer = "";
-        } else {
-          inputBuffer += c;
-        }
-      }
-      
-      // Check for inactivity
-      if (millis() - lastBlinkTime > 10000) {
-        // Send status update every 10 seconds
-        sendState();
-        lastBlinkTime = millis();
-      }
-      
-      delay(1);
-    }
-    
-    debugPrint("Client disconnected");
-    client.stop();
-  }
 }
