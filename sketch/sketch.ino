@@ -3,8 +3,6 @@
 
 int M1_Forward = 128;//Corresponding to 10000000 in binary, M1 is moving forward
 int M1_Backward = 64;//Corresponding to the binary 01000000, M1 moves backwards
-int M2_Forward = 32;
-int M2_Backward = 16;
 
 BluetoothSerial SerialBT;
 
@@ -35,13 +33,11 @@ void loop() {
     char c = SerialBT.read();
     if (c == 'f') {
       Move(M1_Forward,255);   //Motor forward rotation
-      Move(M2_Forward,255);   //Motor forward rotation
       SerialBT.println("forward");
     } else if (c == 'b') {
       Move(M1_Backward,-255);   //Motor reverse rotation
-      Move(M2_Backward,-255);   //Motor reverse rotation
       SerialBT.println("backward");
     }
   }
-
+  
 }
