@@ -84,6 +84,11 @@ if ! arduino-cli lib install LedControl; then
     error_exit "Failed to install LedControl library."
 fi
 
+info "Installing BluetoothSerial library..."
+if ! arduino-cli lib install BluetoothSerial; then
+    error_exit "Failed to install BluetoothSerial library."
+fi
+
 info "Arduino CLI setup complete."
 
 # === Step 7: Download LLM model ===

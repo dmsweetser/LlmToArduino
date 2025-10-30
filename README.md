@@ -118,3 +118,7 @@ curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.
 nano ~/.bashrc
 ADD export PATH="$PATH:/home/%USER%/LlmToArduino/bin"
 sudo usermod -aG dialout %USER%
+
+CONNECT TO MACHINE OVER BLUETOOTH
+
+sudo rfcomm connect /dev/rfcomm0 08:A6:F7:70:18:52 1 &

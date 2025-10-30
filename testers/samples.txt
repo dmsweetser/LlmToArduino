@@ -1,0 +1,964 @@
+KoboldAI: I see the issue now. Your ACEBOTT ESP32 Car-Shield-V1.0 uses a shift register control system rather than direct PWM control. Let me completely revise all sketches to properly interface with this control system.
+
+### **Revised Sketch 3: Motor Control via Bluetooth (Corrected for ACEBOTT Shield with Shift Register)**
+```cpp
+#include "Arduino.h"
+
+// Motor control pins for ACEBOTT ESP32 Car-Shield-V1.0
+#define SHCP_PIN    18    // Shift Register Clock (SHCP)
+#define EN_PIN      16    // Enable (EN)
+#define DATA_PIN    5     // Data (SER)
+#define STCP_PIN    17    // Latch (STCP)
+#define PWM1_PIN    19    // PWM Control
+
+// Motor direction constants (binary values)
+#define M1_FORWARD  128   // 10000000 - M1 forward
+#define M1_BACKWARD 64    // 01000000 - M1 backward
+#define M2_FORWARD  32    // 00100000 - M2 forward
+#define M2_BACKWARD 16    // 00010000 - M2 backward
+
+// Combined motor control
+#define MOTOR_FORWARD  (M1_FORWARD | M2_FORWARD)
+#define MOTOR_BACKWARD (M1_BACKWARD | M2_BACKWARD)
+#define MOTOR_LEFT     (M1_BACKWARD | M2_FORWARD)
+#define MOTOR_RIGHT    (M1_FORWARD | M2_BACKWARD)
+
+BluetoothSerial SerialBT;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  // Initialize control pins
+  pinMode(SHCP_PIN, OUTPUT);
+  pinMode(EN_PIN, OUTPUT);
+  pinMode(DATA_PIN, OUTPUT);
+  pinMode(STCP_PIN, OUTPUT);
+  pinMode(PWM1_PIN, OUTPUT);
+  
+  // Initialize LED
+  pinMode(2, OUTPUT);
+  digitalWrite(2, HIGH);
+  delay(100);
+  digitalWrite(2, LOW);
+  
+  // Initialize shift register
+  digitalWrite(EN_PIN, LOW);
+  digitalWrite(STCP_PIN, LOW);
+  shiftOut(DATA_PIN, SHCP_PIN, MSBFIRST, 0);
+  digitalWrite(STCP_PIN, HIGH);
+  
+  SerialBT.begin("ESP32-Motor-Test");
+  Serial.println("Sketch 3: Motor control via Bluetooth (ACEBOTT Shield with Shift Register)");
+}
+
+void loop() {
+  if (SerialBT.available()) {
+    char c = SerialBT.read();
+    
+    switch(c) {
+      case 'F':
+        moveMotor(MOTOR_FORWARD, 255);
+        SerialBT.println("Moving forward");
+        break;
+        
+      case 'B':
+        moveMotor(MOTOR_BACKWARD, 255);
+        SerialBT.println("Moving backward");
+        break;
+        
+      case 'L':
+        moveMotor(MOTOR_LEFT, 255);
+        SerialBT.println("Turning left");
+        break;
+        
+      case 'R':
+        moveMotor(MOTOR_RIGHT, 255);
+        SerialBT.println("Turning right");
+        break;
+        
+      case 'S':
+        moveMotor(0, 0);
+        SerialBT.println("Stopped");
+        break;
+        
+      default:
+        SerialBT.println("Unknown command");
+        break;
+    }
+  }
+}
+
+void moveMotor(int direction, int speed) {
+  // Ensure speed is within valid range
+  speed = constrain(speed, 0, 255);
+  
+  // Set PWM speed
+  analogWrite(PWM1_PIN, speed);
+  
+  // Enable motor control
+  digitalWrite(EN_PIN, LOW);
+  
+  // Latch low
+  digitalWrite(STCP_PIN, LOW);
+  
+  // Send direction data through shift register
+  shiftOut(DATA_PIN, SHCP_PIN, MSBFIRST, direction);
+  
+  // Latch high to update
+  digitalWrite(STCP_PIN, HIGH);
+}
+```
+
+### **Revised Sketch 4: Servo Control via Bluetooth (with ACEBOTT Shield)**
+```cpp
+#include "Arduino.h"
+#include <ESP32Servo.h>
+
+// Motor control pins for ACEBOTT ESP32 Car-Shield-V1.0
+#define SHCP_PIN    18    // Shift Register Clock (SHCP)
+#define EN_PIN      16    // Enable (EN)
+#define DATA_PIN    5     // Data (SER)
+#define STCP_PIN    17    // Latch (STCP)
+#define PWM1_PIN    19    // PWM Control
+
+// Motor direction constants (binary values)
+#define M1_FORWARD  128   // 10000000 - M1 forward
+#define M1_BACKWARD 64    // 01000000 - M1 backward
+#define M2_FORWARD  32    // 00100000 - M2 forward
+#define M2_BACKWARD 16    // 00010000 - M2 backward
+
+// Combined motor control
+#define MOTOR_FORWARD  (M1_FORWARD | M2_FORWARD)
+#define MOTOR_BACKWARD (M1_BACKWARD | M2_BACKWARD)
+#define MOTOR_LEFT     (M1_BACKWARD | M2_FORWARD)
+#define MOTOR_RIGHT    (M1_FORWARD | M2_BACKWARD)
+
+// Servo pins
+#define FIXED_SERVO_PIN 25
+#define TURN_SERVO_PIN 26
+
+BluetoothSerial SerialBT;
+Servo fixedServo;
+Servo turnServo;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  // Initialize control pins
+  pinMode(SHCP_PIN, OUTPUT);
+  pinMode(EN_PIN, OUTPUT);
+  pinMode(DATA_PIN, OUTPUT);
+  pinMode(STCP_PIN, OUTPUT);
+  pinMode(PWM1_PIN, OUTPUT);
+  
+  // Initialize LED
+  pinMode(2, OUTPUT);
+  digitalWrite(2, HIGH);
+  delay(100);
+  digitalWrite(2, LOW);
+  
+  // Initialize shift register
+  digitalWrite(EN_PIN, LOW);
+  digitalWrite(STCP_PIN, LOW);
+  shiftOut(DATA_PIN, SHCP_PIN, MSBFIRST, 0);
+  digitalWrite(STCP_PIN, HIGH);
+  
+  // Initialize servos
+  fixedServo.attach(FIXED_SERVO_PIN);
+  turnServo.attach(TURN_SERVO_PIN);
+  fixedServo.write(90);
+  turnServo.write(90);
+  
+  SerialBT.begin("ESP32-Servo-Test");
+  Serial.println("Sketch 4: Servo control via Bluetooth (ACEBOTT Shield)");
+}
+
+void loop() {
+  if (SerialBT.available()) {
+    char c = SerialBT.read();
+    
+    switch(c) {
+      case 'S':
+        // Read servo angle
+        int angle = SerialBT.parseInt();
+        if (angle >= 0 && angle <= 180) {
+          fixedServo.write(angle);
+          turnServo.write(angle);
+          SerialBT.print("Servo angle set to ");
+          SerialBT.println(angle);
+        } else {
+          SerialBT.println("ERROR: Angle must be 0-180");
+        }
+        break;
+        
+      case 'F':
+        fixedServo.write(0);
+        turnServo.write(0);
+        SerialBT.println("Fixed servo: 0 degrees");
+        break;
+        
+      case 'T':
+        fixedServo.write(180);
+        turnServo.write(180);
+        SerialBT.println("Fixed servo: 180 degrees");
+        break;
+        
+      default:
+        // Handle motor commands
+        if (c == 'F') {
+          moveMotor(MOTOR_FORWARD, 180);
+          SerialBT.println("Moving forward");
+        } else if (c == 'B') {
+          moveMotor(MOTOR_BACKWARD, 180);
+          SerialBT.println("Moving backward");
+        } else if (c == 'L') {
+          moveMotor(MOTOR_LEFT, 180);
+          SerialBT.println("Turning left");
+        } else if (c == 'R') {
+          moveMotor(MOTOR_RIGHT, 180);
+          SerialBT.println("Turning right");
+        } else if (c == 'S') {
+          moveMotor(0, 0);
+          SerialBT.println("Stopped");
+        } else {
+          SerialBT.println("Unknown command");
+        }
+        break;
+    }
+  }
+}
+
+void moveMotor(int direction, int speed) {
+  // Ensure speed is within valid range
+  speed = constrain(speed, 0, 255);
+  
+  // Set PWM speed
+  analogWrite(PWM1_PIN, speed);
+  
+  // Enable motor control
+  digitalWrite(EN_PIN, LOW);
+  
+  // Latch low
+  digitalWrite(STCP_PIN, LOW);
+  
+  // Send direction data through shift register
+  shiftOut(DATA_PIN, SHCP_PIN, MSBFIRST, direction);
+  
+  // Latch high to update
+  digitalWrite(STCP_PIN, HIGH);
+}
+```
+
+### **Revised Sketch 5: Ultrasonic Sensor and Buzzer (with ACEBOTT Shield)**
+```cpp
+#include "Arduino.h"
+#include <ESP32Servo.h>
+
+// Motor control pins for ACEBOTT ESP32 Car-Shield-V1.0
+#define SHCP_PIN    18    // Shift Register Clock (SHCP)
+#define EN_PIN      16    // Enable (EN)
+#define DATA_PIN    5     // Data (SER)
+#define STCP_PIN    17    // Latch (STCP)
+#define PWM1_PIN    19    // PWM Control
+
+// Motor direction constants (binary values)
+#define M1_FORWARD  128   // 10000000 - M1 forward
+#define M1_BACKWARD 64    // 01000000 - M1 backward
+#define M2_FORWARD  32    // 00100000 - M2 forward
+#define M2_BACKWARD 16    // 00010000 - M2 backward
+
+// Combined motor control
+#define MOTOR_FORWARD  (M1_FORWARD | M2_FORWARD)
+#define MOTOR_BACKWARD (M1_BACKWARD | M2_BACKWARD)
+#define MOTOR_LEFT     (M1_BACKWARD | M2_FORWARD)
+#define MOTOR_RIGHT    (M1_FORWARD | M2_BACKWARD)
+
+// Servo pins
+#define FIXED_SERVO_PIN 25
+#define TURN_SERVO_PIN 26
+
+// Sensor pins
+#define TRIG_PIN 9
+#define ECHO_PIN 8
+
+// Buzzer pin
+#define BUZZER_PIN 33
+
+BluetoothSerial SerialBT;
+Servo fixedServo;
+Servo turnServo;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  // Initialize control pins
+  pinMode(SHCP_PIN, OUTPUT);
+  pinMode(EN_PIN, OUTPUT);
+  pinMode(DATA_PIN, OUTPUT);
+  pinMode(STCP_PIN, OUTPUT);
+  pinMode(PWM1_PIN, OUTPUT);
+  
+  // Initialize LED
+  pinMode(2, OUTPUT);
+  digitalWrite(2, HIGH);
+  delay(100);
+  digitalWrite(2, LOW);
+  
+  // Initialize shift register
+  digitalWrite(EN_PIN, LOW);
+  digitalWrite(STCP_PIN, LOW);
+  shiftOut(DATA_PIN, SHCP_PIN, MSBFIRST, 0);
+  digitalWrite(STCP_PIN, HIGH);
+  
+  // Initialize servo pins
+  fixedServo.attach(FIXED_SERVO_PIN);
+  turnServo.attach(TURN_SERVO_PIN);
+  fixedServo.write(90);
+  turnServo.write(90);
+  
+  // Initialize sensor pins
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  
+  // Initialize buzzer
+  pinMode(BUZZER_PIN, OUTPUT);
+  
+  SerialBT.begin("ESP32-Sensor-Test");
+  Serial.println("Sketch 5: Sensor and buzzer control via Bluetooth (ACEBOTT Shield)");
+}
+
+void loop() {
+  if (SerialBT.available()) {
+    String command = SerialBT.readStringUntil('\n');
+    command.trim();
+    
+    if (command.startsWith("move:")) {
+      String direction = command.substring(5);
+      if (direction == "forward") {
+        moveMotor(MOTOR_FORWARD, 180);
+        SerialBT.println("OK: Moving forward");
+      } else if (direction == "backward") {
+        moveMotor(MOTOR_BACKWARD, 180);
+        SerialBT.println("OK: Moving backward");
+      } else if (direction == "left") {
+        moveMotor(MOTOR_LEFT, 180);
+        SerialBT.println("OK: Turning left");
+      } else if (direction == "right") {
+        moveMotor(MOTOR_RIGHT, 180);
+        SerialBT.println("OK: Turning right");
+      } else if (direction == "stop") {
+        moveMotor(0, 0);
+        SerialBT.println("OK: Stopped");
+      } else {
+        SerialBT.println("ERROR: Unknown direction");
+      }
+    }
+    else if (command.startsWith("servo:")) {
+      int angle = command.substring(5).toInt();
+      if (angle >= 0 && angle <= 180) {
+        fixedServo.write(angle);
+        turnServo.write(angle);
+        SerialBT.print("OK: Servo angle set to ");
+        SerialBT.println(angle);
+      } else {
+        SerialBT.println("ERROR: Angle must be 0-180");
+      }
+    }
+    else if (command.startsWith("buzzer:")) {
+      int commaIndex = command.indexOf(',');
+      if (commaIndex != -1) {
+        int tone = command.substring(5, commaIndex).toInt();
+        int duration = command.substring(commaIndex + 1).toInt();
+        if (tone > 0 && duration > 0) {
+          tone(BUZZER_PIN, tone);
+          delay(duration);
+          noTone(BUZZER_PIN);
+          SerialBT.print("OK: Buzzer played tone ");
+          SerialBT.print(tone);
+          SerialBT.print(" for ");
+          SerialBT.print(duration);
+          SerialBT.println("ms");
+        } else {
+          SerialBT.println("ERROR: Invalid tone or duration");
+        }
+      } else {
+        SerialBT.println("ERROR: Invalid format");
+      }
+    }
+    else if (command == "distance") {
+      int distance = readUltrasonic();
+      SerialBT.print("OK: Distance: ");
+      SerialBT.print(distance);
+      SerialBT.println(" cm");
+    }
+    else {
+      SerialBT.println("ERROR: Unknown command");
+    }
+  }
+}
+
+int readUltrasonic() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  long duration = pulseIn(ECHO_PIN, HIGH);
+  return duration * 0.034 / 2;
+}
+
+void moveMotor(int direction, int speed) {
+  // Ensure speed is within valid range
+  speed = constrain(speed, 0, 255);
+  
+  // Set PWM speed
+  analogWrite(PWM1_PIN, speed);
+  
+  // Enable motor control
+  digitalWrite(EN_PIN, LOW);
+  
+  // Latch low
+  digitalWrite(STCP_PIN, LOW);
+  
+  // Send direction data through shift register
+  shiftOut(DATA_PIN, SHCP_PIN, MSBFIRST, direction);
+  
+  // Latch high to update
+  digitalWrite(STCP_PIN, HIGH);
+}
+```
+
+### **Revised Sketch 6: IR Sensors and Complete Command Structure (with ACEBOTT Shield)**
+```cpp
+#include "Arduino.h"
+#include <ESP32Servo.h>
+
+// Motor control pins for ACEBOTT ESP32 Car-Shield-V1.0
+#define SHCP_PIN    18    // Shift Register Clock (SHCP)
+#define EN_PIN      16    // Enable (EN)
+#define DATA_PIN    5     // Data (SER)
+#define STCP_PIN    17    // Latch (STCP)
+#define PWM1_PIN    19    // PWM Control
+
+// Motor direction constants (binary values)
+#define M1_FORWARD  128   // 10000000 - M1 forward
+#define M1_BACKWARD 64    // 01000000 - M1 backward
+#define M2_FORWARD  32    // 00100000 - M2 forward
+#define M2_BACKWARD 16    // 00010000 - M2 backward
+
+// Combined motor control
+#define MOTOR_FORWARD  (M1_FORWARD | M2_FORWARD)
+#define MOTOR_BACKWARD (M1_BACKWARD | M2_BACKWARD)
+#define MOTOR_LEFT     (M1_BACKWARD | M2_FORWARD)
+#define MOTOR_RIGHT    (M1_FORWARD | M2_BACKWARD)
+
+// Servo pins
+#define FIXED_SERVO_PIN 25
+#define TURN_SERVO_PIN 26
+
+// Sensor pins
+#define TRIG_PIN 9
+#define ECHO_PIN 8
+#define LEFT_SENSOR 35
+#define MIDDLE_SENSOR 36
+#define RIGHT_SENSOR 39
+
+// Buzzer pin
+#define BUZZER_PIN 33
+
+BluetoothSerial SerialBT;
+Servo fixedServo;
+Servo turnServo;
+
+// Sensor data
+int leftSensorValue = 0;
+int middleSensorValue = 0;
+int rightSensorValue = 0;
+int ultrasonicDistance = 0;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  // Initialize control pins
+  pinMode(SHCP_PIN, OUTPUT);
+  pinMode(EN_PIN, OUTPUT);
+  pinMode(DATA_PIN, OUTPUT);
+  pinMode(STCP_PIN, OUTPUT);
+  pinMode(PWM1_PIN, OUTPUT);
+  
+  // Initialize LED
+  pinMode(2, OUTPUT);
+  digitalWrite(2, HIGH);
+  delay(100);
+  digitalWrite(2, LOW);
+  
+  // Initialize shift register
+  digitalWrite(EN_PIN, LOW);
+  digitalWrite(STCP_PIN, LOW);
+  shiftOut(DATA_PIN, SHCP_PIN, MSBFIRST, 0);
+  digitalWrite(STCP_PIN, HIGH);
+  
+  // Initialize servo pins
+  fixedServo.attach(FIXED_SERVO_PIN);
+  turnServo.attach(TURN_SERVO_PIN);
+  fixedServo.write(90);
+  turnServo.write(90);
+  
+  // Initialize sensor pins
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(LEFT_SENSOR, INPUT);
+  pinMode(MIDDLE_SENSOR, INPUT);
+  pinMode(RIGHT_SENSOR, INPUT);
+  
+  // Initialize buzzer
+  pinMode(BUZZER_PIN, OUTPUT);
+  
+  SerialBT.begin("ESP32-Command-Test");
+  Serial.println("Sketch 6: Complete command structure with sensors (ACEBOTT Shield)");
+}
+
+void loop() {
+  if (SerialBT.available()) {
+    String command = SerialBT.readStringUntil('\n');
+    command.trim();
+    
+    if (command.startsWith("move:")) {
+      String direction = command.substring(5);
+      if (direction == "forward") {
+        moveMotor(MOTOR_FORWARD, 180);
+        SerialBT.println("OK: Moving forward");
+      } else if (direction == "backward") {
+        moveMotor(MOTOR_BACKWARD, 180);
+        SerialBT.println("OK: Moving backward");
+      } else if (direction == "left") {
+        moveMotor(MOTOR_LEFT, 180);
+        SerialBT.println("OK: Turning left");
+      } else if (direction == "right") {
+        moveMotor(MOTOR_RIGHT, 180);
+        SerialBT.println("OK: Turning right");
+      } else if (direction == "stop") {
+        moveMotor(0, 0);
+        SerialBT.println("OK: Stopped");
+      } else {
+        SerialBT.println("ERROR: Unknown direction");
+      }
+    }
+    else if (command.startsWith("servo:")) {
+      int angle = command.substring(5).toInt();
+      if (angle >= 0 && angle <= 180) {
+        fixedServo.write(angle);
+        turnServo.write(angle);
+        SerialBT.print("OK: Servo angle set to ");
+        SerialBT.println(angle);
+      } else {
+        SerialBT.println("ERROR: Angle must be 0-180");
+      }
+    }
+    else if (command.startsWith("buzzer:")) {
+      int commaIndex = command.indexOf(',');
+      if (commaIndex != -1) {
+        int tone = command.substring(5, commaIndex).toInt();
+        int duration = command.substring(commaIndex + 1).toInt();
+        if (tone > 0 && duration > 0) {
+          tone(BUZZER_PIN, tone);
+          delay(duration);
+          noTone(BUZZER_PIN);
+          SerialBT.print("OK: Buzzer played tone ");
+          SerialBT.print(tone);
+          SerialBT.print(" for ");
+          SerialBT.print(duration);
+          SerialBT.println("ms");
+        } else {
+          SerialBT.println("ERROR: Invalid tone or duration");
+        }
+      } else {
+        SerialBT.println("ERROR: Invalid format");
+      }
+    }
+    else if (command == "distance") {
+      int distance = readUltrasonic();
+      SerialBT.print("OK: Distance: ");
+      SerialBT.print(distance);
+      SerialBT.println(" cm");
+    }
+    else if (command == "sensors") {
+      readIRSensors();
+      SerialBT.print("OK: Left: ");
+      SerialBT.print(leftSensorValue);
+      SerialBT.print(", Middle: ");
+      SerialBT.print(middleSensorValue);
+      SerialBT.print(", Right: ");
+      SerialBT.println(rightSensorValue);
+    }
+    else {
+      SerialBT.println("ERROR: Unknown command");
+    }
+  }
+}
+
+void readIRSensors() {
+  leftSensorValue = analogRead(LEFT_SENSOR);
+  middleSensorValue = analogRead(MIDDLE_SENSOR);
+  rightSensorValue = analogRead(RIGHT_SENSOR);
+}
+
+int readUltrasonic() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  long duration = pulseIn(ECHO_PIN, HIGH);
+  return duration * 0.034 / 2;
+}
+
+void moveMotor(int direction, int speed) {
+  // Ensure speed is within valid range
+  speed = constrain(speed, 0, 255);
+  
+  // Set PWM speed
+  analogWrite(PWM1_PIN, speed);
+  
+  // Enable motor control
+  digitalWrite(EN_PIN, LOW);
+  
+  // Latch low
+  digitalWrite(STCP_PIN, LOW);
+  
+  // Send direction data through shift register
+  shiftOut(DATA_PIN, SHCP_PIN, MSBFIRST, direction);
+  
+  // Latch high to update
+  digitalWrite(STCP_PIN, HIGH);
+}
+```
+
+### **Revised Sketch 7: Complete System with Camera (Final)**
+```cpp
+#include "Arduino.h"
+#include <BluetoothSerial.h>
+#include <ESP32Servo.h>
+
+// Motor control pins for ACEBOTT ESP32 Car-Shield-V1.0
+#define SHCP_PIN    18    // Shift Register Clock (SHCP)
+#define EN_PIN      16    // Enable (EN)
+#define DATA_PIN    5     // Data (SER)
+#define STCP_PIN    17    // Latch (STCP)
+#define PWM1_PIN    19    // PWM Control
+
+// Motor direction constants (binary values)
+#define M1_FORWARD  128   // 10000000 - M1 forward
+#define M1_BACKWARD 64    // 01000000 - M1 backward
+#define M2_FORWARD  32    // 00100000 - M2 forward
+#define M2_BACKWARD 16    // 00010000 - M2 backward
+
+// Combined motor control
+#define MOTOR_FORWARD  (M1_FORWARD | M2_FORWARD)
+#define MOTOR_BACKWARD (M1_BACKWARD | M2_BACKWARD)
+#define MOTOR_LEFT     (M1_BACKWARD | M2_FORWARD)
+#define MOTOR_RIGHT    (M1_FORWARD | M2_BACKWARD)
+
+// Servo pins
+#define FIXED_SERVO_PIN 25
+#define TURN_SERVO_PIN 26
+
+// Sensor pins
+#define TRIG_PIN 9
+#define ECHO_PIN 8
+#define LEFT_SENSOR 35
+#define MIDDLE_SENSOR 36
+#define RIGHT_SENSOR 39
+
+// Buzzer pin
+#define BUZZER_PIN 33
+
+// Shooting pin
+#define SHOOT_PIN 32
+
+// UART Camera pins
+#define CAM_TX_PIN 13
+#define CAM_RX_PIN 14
+
+BluetoothSerial SerialBT;
+Servo fixedServo;
+Servo turnServo;
+
+// === Sensor Data ===
+int leftSensorValue = 0;
+int middleSensorValue = 0;
+int rightSensorValue = 0;
+int ultrasonicDistance = 0;
+
+// === UART Buffer & Image Handling ===
+#define UART_BAUD_RATE 115200
+#define MAX_IMAGE_SIZE 60000
+uint8_t imageBuffer[MAX_IMAGE_SIZE];
+int imageIndex = 0;
+bool imageReceived = false;
+bool imageStarted = false;
+uint32_t expectedImageSize = 0;
+unsigned long lastImageTime = 0;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  // Initialize control pins
+  pinMode(SHCP_PIN, OUTPUT);
+  pinMode(EN_PIN, OUTPUT);
+  pinMode(DATA_PIN, OUTPUT);
+  pinMode(STCP_PIN, OUTPUT);
+  pinMode(PWM1_PIN, OUTPUT);
+  
+  // Initialize LED
+  pinMode(2, OUTPUT);
+  digitalWrite(2, HIGH);
+  delay(100);
+  digitalWrite(2, LOW);
+  
+  // Initialize shift register
+  digitalWrite(EN_PIN, LOW);
+  digitalWrite(STCP_PIN, LOW);
+  shiftOut(DATA_PIN, SHCP_PIN, MSBFIRST, 0);
+  digitalWrite(STCP_PIN, HIGH);
+  
+  // Initialize servo pins
+  fixedServo.attach(FIXED_SERVO_PIN);
+  turnServo.attach(TURN_SERVO_PIN);
+  fixedServo.write(90);
+  turnServo.write(90);
+  
+  // Initialize sensor pins
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(LEFT_SENSOR, INPUT);
+  pinMode(MIDDLE_SENSOR, INPUT);
+  pinMode(RIGHT_SENSOR, INPUT);
+  
+  // Initialize buzzer
+  pinMode(BUZZER_PIN, OUTPUT);
+  
+  // Initialize shooting pin
+  pinMode(SHOOT_PIN, OUTPUT);
+  
+  // Initialize UART for camera
+  Serial2.begin(UART_BAUD_RATE, SERIAL_8N1, CAM_RX_PIN, CAM_TX_PIN);
+  
+  SerialBT.begin("ESP32-Camera-Rover");
+  Serial.println("Sketch 7: Complete system with camera (ACEBOTT Shield)");
+}
+
+void loop() {
+  // Handle UART image data (from camera ESP32)
+  handleUartImage();
+  
+  // Handle Bluetooth client commands
+  handleBluetoothClient();
+  
+  // Update sensor data
+  readUltrasonic();
+  readIRSensors();
+  
+  // Update LED blinking
+  static unsigned long lastBlinkTime = 0;
+  if (millis() - lastBlinkTime >= 1000) {
+    lastBlinkTime = millis();
+    digitalWrite(2, !digitalRead(2));
+  }
+}
+
+void handleUartImage() {
+  while (Serial2.available() > 0) {
+    char c = Serial2.read();
+
+    if (c == 'S' && !imageStarted) {
+      imageStarted = true;
+      imageIndex = 0;
+      expectedImageSize = 0;
+      Serial.println("📷 Image start detected");
+    } else if (imageStarted && imageIndex == 0) {
+      // Read 4-byte image length
+      expectedImageSize = (uint32_t(c) << 24);
+      imageIndex++;
+    } else if (imageStarted && imageIndex == 1) {
+      expectedImageSize |= (uint32_t(c) << 16);
+      imageIndex++;
+    } else if (imageStarted && imageIndex == 2) {
+      expectedImageSize |= (uint32_t(c) << 8);
+      imageIndex++;
+    } else if (imageStarted && imageIndex == 3) {
+      expectedImageSize |= (uint32_t(c));
+      imageIndex++;
+      Serial.print("📏 Expected image size: ");
+      Serial.print(expectedImageSize);
+      Serial.println(" bytes");
+    } else if (imageStarted && imageIndex > 3) {
+      if (imageIndex - 4 < MAX_IMAGE_SIZE) {
+        imageBuffer[imageIndex - 4] = c;
+      } else {
+        Serial.println("Image buffer overflow!");
+        imageStarted = false;
+        imageIndex = 0;
+        continue;
+      }
+
+      if (imageIndex - 4 >= expectedImageSize) {
+        // End of image received
+        if (c == 'E') {
+          imageReceived = true;
+          Serial.println("Full image received and stored");
+          lastImageTime = millis();
+        } else {
+          Serial.println("Unexpected end marker");
+        }
+        imageStarted = false;
+        imageIndex = 0;
+      }
+    }
+  }
+
+  // If image is ready, send it over Bluetooth
+  if (imageReceived && SerialBT.availableForWrite() > 0) {
+    // Send image over Bluetooth (chunked)
+    for (int i = 0; i < expectedImageSize; i++) {
+      SerialBT.write(imageBuffer[i]);
+    }
+    SerialBT.write('E'); // End marker
+    SerialBT.flush();
+    Serial.println("Image sent over Bluetooth");
+    imageReceived = false;
+  }
+}
+
+void handleBluetoothClient() {
+  if (SerialBT.available()) {
+    String command = SerialBT.readStringUntil('\n');
+    command.trim();
+    
+    if (command.startsWith("move:")) {
+      String direction = command.substring(5);
+      if (direction == "forward") {
+        moveMotor(MOTOR_FORWARD, 180);
+        SerialBT.println("OK: Moving forward");
+      } else if (direction == "backward") {
+        moveMotor(MOTOR_BACKWARD, 180);
+        SerialBT.println("OK: Moving backward");
+      } else if (direction == "left") {
+        moveMotor(MOTOR_LEFT, 180);
+        SerialBT.println("OK: Turning left");
+      } else if (direction == "right") {
+        moveMotor(MOTOR_RIGHT, 180);
+        SerialBT.println("OK: Turning right");
+      } else if (direction == "stop") {
+        moveMotor(0, 0);
+        SerialBT.println("OK: Stopped");
+      } else {
+        SerialBT.println("ERROR: Unknown direction");
+      }
+    }
+    else if (command.startsWith("servo:")) {
+      int angle = command.substring(5).toInt();
+      if (angle >= 0 && angle <= 180) {
+        fixedServo.write(angle);
+        turnServo.write(angle);
+        SerialBT.print("OK: Servo angle set to ");
+        SerialBT.println(angle);
+      } else {
+        SerialBT.println("ERROR: Angle must be 0-180");
+      }
+    }
+    else if (command.startsWith("buzzer:")) {
+      int commaIndex = command.indexOf(',');
+      if (commaIndex != -1) {
+        int tone = command.substring(5, commaIndex).toInt();
+        int duration = command.substring(commaIndex + 1).toInt();
+        if (tone > 0 && duration > 0) {
+          tone(BUZZER_PIN, tone);
+          delay(duration);
+          noTone(BUZZER_PIN);
+          SerialBT.print("OK: Buzzer played tone ");
+          SerialBT.print(tone);
+          SerialBT.print(" for ");
+          SerialBT.print(duration);
+          SerialBT.println("ms");
+        } else {
+          SerialBT.println("ERROR: Invalid tone or duration");
+        }
+      } else {
+        SerialBT.println("ERROR: Invalid format");
+      }
+    }
+    else if (command == "distance") {
+      int distance = readUltrasonic();
+      SerialBT.print("OK: Distance: ");
+      SerialBT.print(distance);
+      SerialBT.println(" cm");
+    }
+    else if (command == "sensors") {
+      readIRSensors();
+      SerialBT.print("OK: Left: ");
+      SerialBT.print(leftSensorValue);
+      SerialBT.print(", Middle: ");
+      SerialBT.print(middleSensorValue);
+      SerialBT.print(", Right: ");
+      SerialBT.println(rightSensorValue);
+    }
+    else if (command == "shoot") {
+      digitalWrite(SHOOT_PIN, HIGH);
+      delay(200);
+      digitalWrite(SHOOT_PIN, LOW);
+      SerialBT.println("OK: Shooting triggered");
+    }
+    else if (command == "snapshot") {
+      // Send command to camera ESP32 to capture
+      Serial2.write('C');
+      Serial.println("Sent 'C' to camera ESP32");
+      SerialBT.println("OK: Snapshot requested");
+    }
+    else {
+      SerialBT.println("ERROR: Unknown command");
+    }
+  }
+}
+
+void readIRSensors() {
+  leftSensorValue = analogRead(LEFT_SENSOR);
+  middleSensorValue = analogRead(MIDDLE_SENSOR);
+  rightSensorValue = analogRead(RIGHT_SENSOR);
+}
+
+int readUltrasonic() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  long duration = pulseIn(ECHO_PIN, HIGH);
+  return duration * 0.034 / 2;
+}
+
+void moveMotor(int direction, int speed) {
+  // Ensure speed is within valid range
+  speed = constrain(speed, 0, 255);
+  
+  // Set PWM speed
+  analogWrite(PWM1_PIN, speed);
+  
+  // Enable motor control
+  digitalWrite(EN_PIN, LOW);
+  
+  // Latch low
+  digitalWrite(STCP_PIN, LOW);
+  
+  // Send direction data through shift register
+  shiftOut(DATA_PIN, SHCP_PIN, MSBFIRST, direction);
+  
+  // Latch high to update
+  digitalWrite(STCP_PIN, HIGH);
+}
+```
