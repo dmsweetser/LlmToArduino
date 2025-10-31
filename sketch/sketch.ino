@@ -1,8 +1,14 @@
 #include"Arduino.h"
 #include <BluetoothSerial.h>
 
-int M1_Forward = 128;//Corresponding to 10000000 in binary, M1 is moving forward
-int M1_Backward = 64;//Corresponding to the binary 01000000, M1 moves backwards
+const int M1_Forward        = 128;
+const int M1_Backward       = 64;
+const int M2_Forward        = 32;
+const int M2_Backward       = 16;
+const int M3_Forward        = 2;
+const int M3_Backward       = 4;
+const int M4_Forward        = 1;
+const int M4_Backward       = 8;
 
 BluetoothSerial SerialBT;
 
@@ -32,12 +38,14 @@ void loop() {
     if (SerialBT.available()) {
     char c = SerialBT.read();
     if (c == 'f') {
-      Move(M1_Forward,255);   //Motor forward rotation
+      Move(M4_Forward + M3_Forward + M2_Forward + M1_Forward,255);   //Motor forward rotation
       SerialBT.println("forward");
     } else if (c == 'b') {
-      Move(M1_Backward,-255);   //Motor reverse rotation
+      Move(M4_Backward + M3_Backward + M2_Backward + M1_Backward,-255);   //Motor reverse rotation
       SerialBT.println("backward");
+    } else if (c == 's') {
+      Move(0,-255);   //Stop
+      SerialBT.println("stop");
     }
-  }
-  
+  }  
 }
