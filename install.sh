@@ -89,6 +89,11 @@ if ! arduino-cli lib install BluetoothSerial; then
     error_exit "Failed to install BluetoothSerial library."
 fi
 
+info "Installing ESP32Servo library..."
+if ! arduino-cli lib install ESP32Servo; then
+    error_exit "Failed to install ESP32Servo library."
+fi
+
 info "Arduino CLI setup complete."
 
 # === Step 7: Download LLM model ===
