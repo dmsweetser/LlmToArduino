@@ -291,7 +291,13 @@ void sendCapabilities() {
     "echo:message\n"
     "getStatus:\n"
     "getCapabilities:\n"
-    "move:direction,speed\n"
+    "forward:speed\n"
+    "backward:speed\n"
+    "left:speed\n"
+    "right:speed\n"
+    "stop:\n"
+    "clockwise:speed\n"
+    "counter-clockwise:speed\n"
     "servo:angle\n"
     "shoot:duration\n"
     "buzzer:tone,duration\n"
@@ -299,7 +305,6 @@ void sendCapabilities() {
     "track:mode\n"
     "avoid:mode\n"
     "follow:mode\n"
-    "stop:\n"
     "snapshot:\n";
 
   SerialBT.print(capabilitiesStr);
@@ -414,24 +419,92 @@ void processCommand(String command, String params) {
     getStatus();
   } else if (command == "getCapabilities") {
     sendCapabilities();
-  } else if (command == "move") {
-    move(params);
-  } else if (command == "servo") {
-    servo(params);
-  } else if (command == "shoot") {
-    shoot(params);
-  } else if (command == "buzzer") {
-    buzzer(params);
-  } else if (command == "camera") {
-    camera(params);
-  } else if (command == "track") {
-    track(params);
-  } else if (command == "avoid") {
-    avoid(params);
-  } else if (command == "follow") {
-    follow(params);
+  } else if (command == "forward") {
+    int speed = params.toInt();
+    moveForward(speed);
+  } else if (command == "backward") {
+    int speed = params.toInt();
+    moveBackward(speed);
+  } else if (command == "left") {
+    int speed = params.toInt();
+    moveLeft(speed);
+  } else if (command == "right") {
+    int speed = params.toInt();
+    moveRight(speed);
   } else if (command == "stop") {
-    stop();
+    moveStop();
+  } else if (command == "clockwise") {
+    int speed = params.toInt();
+    moveClockwise(speed);
+  } else if (command == "counter-clockwise") {
+    int speed = params.toInt();
+    moveCounterClockwise(speed);
+  } else if (command == "servo") {
+    int angle = params.toInt();
+    setServoAngle(angle);
+  } else if (command == "shoot") {
+    int duration = params.toInt();
+    if (duration > 0) {
+      shootDuration = duration;
+      triggerShoot();
+    }
+  } else if (command == "buzzer") {
+    int tone = 0;
+    int duration = 1000;
+    int comma = params.indexOf(',');
+    if (comma != -1) {
+      tone = params.substring(0, comma).toInt();
+      duration = params.substring(comma + 1).toInt();
+    } else {
+      tone = params.toInt();
+    }
+    if (tone > 0 && duration > 0) {
+      playBuzzer(tone, duration);
+    }
+  } else if (command == "camera") {
+    if (params == "start") {
+      // This would be handled by sending 'C' to camera ESP32
+      Serial2.write('C');
+      debugPrint("Sent 'C' to camera ESP32");
+      sendResponse("OK", "Camera capture started");
+    } else if (params == "stop") {
+      // This would be handled by sending 'S' to camera ESP32
+      Serial2.write('S');
+      debugPrint("Sent 'S' to camera ESP32");
+      sendResponse("OK", "Camera capture stopped");
+    } else {
+      sendResponse("ERROR", "Invalid camera parameter");
+    }
+  } else if (command == "track") {
+    if (params == "on") {
+      isTracking = true;
+      sendResponse("OK", "Tracking mode enabled");
+    } else if (params == "off") {
+      isTracking = false;
+      sendResponse("OK", "Tracking mode disabled");
+    } else {
+      sendResponse("ERROR", "Invalid track parameter");
+    }
+  } else if (command == "avoid") {
+    if (params == "on") {
+      isAvoiding = true;
+      sendResponse("OK", "Avoiding mode enabled");
+    } else if (params == "off") {
+      isAvoiding = false;
+      sendResponse("OK", "Avoiding mode disabled");
+    } else {
+      sendResponse("ERROR", "Invalid avoid parameter");
+    }
+  } else if (command == "follow") {
+    if (params == "on") {
+      isFollowing = true;
+      sendResponse("OK", "Following mode enabled");
+    } else if (params == "off") {
+      isFollowing = false;
+      sendResponse("OK", "Following mode disabled");
+    } else {
+      sendResponse("ERROR", "Invalid follow parameter");
+    }
   } else if (command == "snapshot") {
     // Send command to camera ESP32 to capture
     Serial2.write('C'); // Trigger capture
@@ -591,15 +664,6 @@ void parseCommand(String command, String params) {
     sendResponse("ERROR", "Unknown command: " + command);
   }
 }
-
-
-
-
-
-
-
-
-
 
 // === Setup Function ===
 void setup() {
