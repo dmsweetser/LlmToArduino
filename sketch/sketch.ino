@@ -561,7 +561,8 @@ void executeScript() {
       if (line.length() > 0) {
         // Check for label
         if (line.startsWith("label:")) {
-          String labelName = line.substring(5).trim();
+          String labelName = line.substring(5);
+          labelName.trim();
           if (labelName.length() > 0) {
             if (labelCount < 10) {
               labels[labelCount].name = labelName;
@@ -582,7 +583,8 @@ void executeScript() {
           } else {
             // Check for GOTO
             if (line.startsWith("goto:")) {
-              String labelName = line.substring(4).trim();
+              String labelName = line.substring(4);
+              labelName.trim();
               for (int i = 0; i < labelCount; i++) {
                 if (labels[i].name == labelName) {
                   scriptIndex = labels[i].line;
