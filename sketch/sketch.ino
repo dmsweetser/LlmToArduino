@@ -1,188 +1,195 @@
 #include <BluetoothSerial.h>
 #include <Arduino.h>
-#include <ESP32Servo.h>
 
-// === No #define: All values are inline ===
+// === Motor Pins (From your working script) ===
+const int M1_Forward = 128;
+const int M1_Backward = 64;
+const int M2_Forward = 32;
+const int M2_Backward = 16;
+const int M3_Forward = 2;
+const int M3_Backward = 4;
+const int M4_Forward = 1;
+const int M4_Backward = 8;
 
 // === Bluetooth Serial ===
 BluetoothSerial SerialBT;
 
-const int LED_BUILTIN = 2;
+String commandBuffer = "";
 
-// === Motor Pins (Direct Control - No #define) ===
-const int MOTOR_FL_FORWARD = 9;
-const int MOTOR_FL_BACKWARD = 10;
-const int MOTOR_FR_FORWARD = 12;
-const int MOTOR_FR_BACKWARD = 13;
+// === UART for Camera (from ESP32-CAM) ===
+const int UART_RX_PIN = 14;
+const int UART_TX_PIN = 13;
 
-// === Servo Pins ===
-const int FIXED_SERVO_PIN = 25;
-const int TURN_SERVO_PIN = 26;
-
-// === Actuator Pins ===
-const int SHOOT_PIN = 32;
-const int BUZZER_PIN = 33;
-
-// === Sensor Pins ===
-const int LEFT_SENSOR = 35;
-const int MIDDLE_SENSOR = 36;
-const int RIGHT_SENSOR = 39;
-const int TRIG_PIN = 9;
-const int ECHO_PIN = 8;
-
-// === Global Variables ===
-bool isCameraActive = false;
-bool isTracking = false;
-bool isAvoiding = false;
-bool isFollowing = false;
-bool isShooting = false;
-bool isBuzzerPlaying = false;
-int servoAngle = 90;
-int shootDuration = 200;
-int buzzerTone = 0;
-int buzzerDuration = 1000;
-int ledPacing = 1000;
-unsigned long lastBlinkTime = 0;
-bool ledState = LOW;
-
-// === UART Buffer & Image Handling ===
-const int UART_BAUD_RATE = 115200;
+// === Image Handling ===
 const int MAX_IMAGE_SIZE = 60000;
 uint8_t imageBuffer[MAX_IMAGE_SIZE];
 int imageIndex = 0;
-bool imageReceived = false;
 bool imageStarted = false;
+bool imageReceived = false;
 uint32_t expectedImageSize = 0;
 unsigned long lastImageTime = 0;
 
-// === Servos ===
-Servo fixedServo;
-Servo turnServo;
+// === LED & Blinking ===
+const int LED_BUILTIN = 2;
+bool ledState = false;
+int ledPacing = 1000;
+unsigned long lastBlinkTime = 0;
 
-// === Sensor Data ===
-int leftSensorValue = 0;
-int middleSensorValue = 0;
-int rightSensorValue = 0;
-int ultrasonicDistance = 0;
-
-// === Script Execution ===
+// === Script Engine ===
 String scriptBuffer = "";
-String currentLine = "";
 int scriptIndex = 0;
 bool scriptRunning = false;
+bool scriptLoaded = false;
 
 // === Labels (Map label name to line number) ===
 struct Label {
   String name;
   int line;
 };
-Label labels[10];  // Max 10 labels
+Label labels[10]; // Max 10 labels
 int labelCount = 0;
 
-// === Motor Control (Inline, No #define) ===
-void moveForward(int speed) {
-  speed = constrain(speed, 0, 255);
-  analogWrite(MOTOR_FL_FORWARD, speed);
-  analogWrite(MOTOR_FL_BACKWARD, 0);
-  analogWrite(MOTOR_FR_FORWARD, speed);
-  analogWrite(MOTOR_FR_BACKWARD, 0);
+// === Debug Print Helper ===
+void debugPrint(const char* message) {
+  Serial.print(message);
+  Serial.flush();
 }
 
-void moveBackward(int speed) {
-  speed = constrain(speed, 0, 255);
-  analogWrite(MOTOR_FL_FORWARD, 0);
-  analogWrite(MOTOR_FL_BACKWARD, speed);
-  analogWrite(MOTOR_FR_FORWARD, 0);
-  analogWrite(MOTOR_FR_BACKWARD, speed);
+// === Motor Control (Same as before) ===
+void Move(int Dir, int Speed) {
+  digitalWrite(16, LOW);
+  analogWrite(19, Speed);
+  digitalWrite(17, LOW);
+  shiftOut(5, 18, MSBFIRST, Dir);
+  digitalWrite(17, HIGH);
 }
 
-void moveLeft(int speed) {
-  speed = constrain(speed, 0, 255);
-  analogWrite(MOTOR_FL_FORWARD, 0);
-  analogWrite(MOTOR_FL_BACKWARD, speed);
-  analogWrite(MOTOR_FR_FORWARD, speed);
-  analogWrite(MOTOR_FR_BACKWARD, 0);
+// === Send Response Over Bluetooth ===
+void sendResponse(String status, String message) {
+  String response = status + ":" + message + "\n";
+  SerialBT.print(response);
+  SerialBT.flush();
 }
 
-void moveRight(int speed) {
-  speed = constrain(speed, 0, 255);
-  analogWrite(MOTOR_FL_FORWARD, speed);
-  analogWrite(MOTOR_FL_BACKWARD, 0);
-  analogWrite(MOTOR_FR_FORWARD, 0);
-  analogWrite(MOTOR_FR_BACKWARD, speed);
+// === Process Command (New) ===
+void processCommand(String cmd, String params) {
+  if (cmd == "forward") {
+    int speed = params.toInt();
+    Move(M4_Forward + M3_Forward + M2_Forward + M1_Forward, speed);
+    sendResponse("OK", "forward: " + params);
+  } else if (cmd == "backward") {
+    int speed = params.toInt();
+    Move(M4_Backward + M3_Backward + M2_Backward + M1_Backward, speed);
+    sendResponse("OK", "backward: " + params);
+  } else if (cmd == "stop") {
+    Move(0, 0);
+    sendResponse("OK", "stop");
+  } else if (cmd == "getCapabilities") {
+    String caps =
+      "forward:speed\n"
+      "backward:speed\n"
+      "stop:\n"
+      "getStatus:\n"
+      "getCapabilities:\n"
+      "echo:message\n"
+      "setLED:pacing\n"
+      "servo:angle\n"
+      "camera:start\n"
+      "camera:stop\n"
+      "snapshot:\n"
+      "delay:ms\n"
+      "run:script\n"
+      "label:name\n"
+      "goto:name\n";
+    SerialBT.print(caps);
+  } else if (cmd == "getStatus") {
+    sendResponse("OK", "led_pacing:" + String(ledPacing) + ", is_camera_active:false");
+  } else if (cmd == "echo") {
+    sendResponse("OK", params);
+  } else if (cmd == "setLED") {
+    int pace = params.toInt();
+    if (pace > 0) {
+      ledPacing = pace;
+      sendResponse("OK", "LED pacing set to " + String(ledPacing));
+    } else {
+      sendResponse("ERROR", "Invalid pacing value");
+    }
+  } else if (cmd == "servo") {
+    int angle = params.toInt();
+    if (angle >= 0 && angle <= 180) {
+      // Mock servo write
+      sendResponse("OK", "servo: " + String(angle));
+    } else {
+      sendResponse("ERROR", "Angle must be 0-180");
+    }
+  } else if (cmd == "camera") {
+    if (params == "start") {
+      Serial2.write('C');
+      debugPrint("Sent 'C' to camera (Serial2)\n");
+      sendResponse("OK", "Camera capture started");
+    } else if (params == "stop") {
+      Serial2.write('S');
+      debugPrint("Sent 'S' to camera (Serial2)\n");
+      sendResponse("OK", "Camera capture stopped");
+    } else {
+      sendResponse("ERROR", "Invalid camera parameter");
+    }
+  } else if (cmd == "snapshot") {
+    Serial2.write('C');
+    debugPrint("Snapshot requested (sent 'C')\n");
+    sendResponse("OK", "Snapshot requested");
+  } else if (cmd == "delay") {
+    int ms = params.toInt();
+    if (ms > 0) {
+      debugPrint("Delaying for ");
+      debugPrint(String(ms).c_str());
+      debugPrint(" ms\n");
+      delay(ms);
+      sendResponse("OK", "delay: " + params);
+    } else {
+      sendResponse("ERROR", "Invalid delay value");
+    }
+  } else if (cmd == "run") {
+    scriptBuffer = params;
+    scriptRunning = true;
+    scriptIndex = 0;
+    labelCount = 0;
+    debugPrint("Script loaded. Starting execution.\n");
+    sendResponse("OK", "Script loaded and running");
+  } else if (cmd == "stop") {
+    scriptRunning = false;
+    sendResponse("OK", "Script stopped");
+  } else {
+    sendResponse("ERROR", "Unknown command: " + cmd);
+  }
 }
 
-void moveStop() {
-  analogWrite(MOTOR_FL_FORWARD, 0);
-  analogWrite(MOTOR_FL_BACKWARD, 0);
-  analogWrite(MOTOR_FR_FORWARD, 0);
-  analogWrite(MOTOR_FR_BACKWARD, 0);
-}
-
-void moveClockwise(int speed) {
-  speed = constrain(speed, 0, 255);
-  analogWrite(MOTOR_FL_FORWARD, 0);
-  analogWrite(MOTOR_FL_BACKWARD, speed);
-  analogWrite(MOTOR_FR_FORWARD, 0);
-  analogWrite(MOTOR_FR_BACKWARD, speed);
-}
-
-void moveCounterClockwise(int speed) {
-  speed = constrain(speed, 0, 255);
-  analogWrite(MOTOR_FL_FORWARD, speed);
-  analogWrite(MOTOR_FL_BACKWARD, 0);
-  analogWrite(MOTOR_FR_FORWARD, speed);
-  analogWrite(MOTOR_FR_BACKWARD, 0);
-}
-
-// === Servo Control ===
-void moveFixedServo(int angle) {
-  fixedServo.write(angle);
-}
-
-void moveTurnServo(int angle) {
-  turnServo.write(angle);
-}
-
-void setServoAngle(int angle) {
-  moveFixedServo(angle);
-  moveTurnServo(angle);
-  servoAngle = angle;
-}
-
-// === Actuators ===
-void triggerShoot() {
-  digitalWrite(SHOOT_PIN, HIGH);
-  delay(shootDuration);
-  digitalWrite(SHOOT_PIN, LOW);
-}
-
-void playBuzzer(int newTone, int duration) {
-  tone(BUZZER_PIN, newTone);
-  delay(duration);
-  noTone(BUZZER_PIN);
-}
-
-// === Sensors ===
-int readUltrasonic() {
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-  long duration = pulseIn(ECHO_PIN, HIGH);
-  ultrasonicDistance = duration * 0.034 / 2;
-  return ultrasonicDistance;
-}
-
-void readIRSensors() {
-  leftSensorValue = analogRead(LEFT_SENSOR);
-  middleSensorValue = analogRead(MIDDLE_SENSOR);
-  rightSensorValue = analogRead(RIGHT_SENSOR);
-}
-
-// === UART Image Handler ===
+// === Handle UART Image from Camera ESP32 (Simulated) ===
 void handleUartImage() {
+  static bool simulate = true;
+  static unsigned long lastSimTime = 0;
+
+  if (simulate && millis() - lastSimTime > 2000) {
+    debugPrint("Simulating image stream...\n");
+    uint32_t size = 10240;
+    expectedImageSize = size;
+    imageStarted = true;
+    imageIndex = 0;
+
+    Serial2.write((size >> 24) & 0xFF);
+    Serial2.write((size >> 16) & 0xFF);
+    Serial2.write((size >> 8) & 0xFF);
+    Serial2.write(size & 0xFF);
+
+    for (int i = 0; i < size; i++) {
+      Serial2.write(random(0, 255));
+      delay(1);
+    }
+    Serial2.write('E');
+    debugPrint("Simulated image sent\n");
+    lastSimTime = millis();
+  }
+
   while (Serial2.available() > 0) {
     char c = Serial2.read();
 
@@ -190,9 +197,8 @@ void handleUartImage() {
       imageStarted = true;
       imageIndex = 0;
       expectedImageSize = 0;
-      debugPrint("📷 Image start detected");
+      debugPrint("Image start detected\n");
     } else if (imageStarted && imageIndex == 0) {
-      // Read 4-byte image length
       expectedImageSize = (uint32_t(c) << 24);
       imageIndex++;
     } else if (imageStarted && imageIndex == 1) {
@@ -203,29 +209,26 @@ void handleUartImage() {
       imageIndex++;
     } else if (imageStarted && imageIndex == 3) {
       expectedImageSize |= (uint32_t(c));
-      imageIndex++;
-      debugPrint("📏 Expected image size: ");
+      debugPrint("Expected image size: ");
       debugPrint(String(expectedImageSize).c_str());
-      debugPrint(" bytes");
+      debugPrint(" bytes\n");
     } else if (imageStarted && imageIndex > 3) {
       if (imageIndex - 4 < MAX_IMAGE_SIZE) {
         imageBuffer[imageIndex - 4] = c;
       } else {
-        debugPrint("Image buffer overflow!");
+        debugPrint("Image buffer overflow!\n");
         imageStarted = false;
         imageIndex = 0;
         continue;
       }
 
       if (imageIndex - 4 >= expectedImageSize) {
-        // End of image received
         if (c == 'E') {
           imageReceived = true;
-          debugPrint("Full image received and stored");
+          debugPrint("Full image received and stored\n");
           lastImageTime = millis();
-          isCameraActive = true;
         } else {
-          debugPrint("Unexpected end marker");
+          debugPrint("Unexpected end marker\n");
         }
         imageStarted = false;
         imageIndex = 0;
@@ -233,445 +236,106 @@ void handleUartImage() {
     }
   }
 
-  // If image is ready, send it over Bluetooth
   if (imageReceived && SerialBT.availableForWrite() > 0) {
-    // Send image over Bluetooth (chunked)
+    debugPrint("Sending image over Bluetooth...\n");
     for (int i = 0; i < expectedImageSize; i++) {
       SerialBT.write(imageBuffer[i]);
     }
-    SerialBT.write('E'); // End marker
+    SerialBT.write('E');
     SerialBT.flush();
-    debugPrint("Image sent over Bluetooth");
+    debugPrint("Image sent over Bluetooth\n");
     imageReceived = false;
   }
 }
 
-void setLED(String params) {
-  unsigned int newPace = params.toInt();
-  if (newPace > 0) {
-    ledPacing = newPace;
-    sendResponse("OK", "LED pacing set to " + String(ledPacing));
-  } else {
-    sendResponse("ERROR", "Invalid pacing value");
+// === Blink LED ===
+void blinkLED() {
+  unsigned long now = millis();
+  if (now - lastBlinkTime >= ledPacing) {
+    ledState = !ledState;
+    digitalWrite(LED_BUILTIN, ledState);
+    lastBlinkTime = now;
   }
 }
 
-// === Response Helpers ===
-void sendResponse(String status, String message) {
-  String response = status + ":" + message + "\n";
-  SerialBT.print(response);
-  SerialBT.flush();
-}
+// === Parse and Execute One Script Line ===
+void parseCommand(String line) {
+  line.trim();
+  if (line.length() == 0) return;
 
-void echo(String params) {
-  sendResponse("OK", params);
-}
-
-void sendState() {
-  String state = "led_pacing:" + String(ledPacing) + "\n";
-  state += "led_state:" + String(ledState) + "\n";
-  state += "distance:" + String(ultrasonicDistance) + "\n";
-  state += "left_sensor:" + String(leftSensorValue) + "\n";
-  state += "middle_sensor:" + String(middleSensorValue) + "\n";
-  state += "right_sensor:" + String(rightSensorValue) + "\n";
-  state += "servo_angle:" + String(servoAngle) + "\n";
-  state += "is_camera_active:" + String(isCameraActive) + "\n";
-  state += "is_tracking:" + String(isTracking) + "\n";
-  state += "is_avoiding:" + String(isAvoiding) + "\n";
-  state += "is_following:" + String(isFollowing) + "\n";
-  state += "is_shooting:" + String(isShooting) + "\n";
-  state += "is_buzzer_playing:" + String(isBuzzerPlaying) + "\n";
-  SerialBT.print(state);
-  SerialBT.flush();
-}
-
-void sendCapabilities() {
-  String capabilitiesStr =
-    "setLED:pacing\n"
-    "echo:message\n"
-    "getStatus:\n"
-    "getCapabilities:\n"
-    "forward:speed\n"
-    "backward:speed\n"
-    "left:speed\n"
-    "right:speed\n"
-    "stop:\n"
-    "clockwise:speed\n"
-    "counter-clockwise:speed\n"
-    "servo:angle\n"
-    "shoot:duration\n"
-    "buzzer:tone,duration\n"
-    "camera:action\n"
-    "track:mode\n"
-    "avoid:mode\n"
-    "follow:mode\n"
-    "snapshot:\n";
-
-  SerialBT.print(capabilitiesStr);
-  SerialBT.flush();
-}
-
-// === Debug Print ===
-void debugPrint(const char* message) {
-  Serial.print(message);
-  Serial.flush();
-}
-
-// === Self-Test ===
-void performSelfTest() {
-  debugPrint("Testing LED...");
-  digitalWrite(LED_BUILTIN, HIGH);
-  delay(500);
-  digitalWrite(LED_BUILTIN, LOW);
-  delay(500);
-  debugPrint("LED test passed");
-
-  debugPrint("Testing servos...");
-  moveFixedServo(0);
-  delay(1000);
-  moveFixedServo(90);
-  delay(1000);
-  moveFixedServo(180);
-  delay(1000);
-  moveFixedServo(90);
-  debugPrint("Servo test passed");
-
-  debugPrint("Testing buzzer...");
-  tone(BUZZER_PIN, 1000);
-  delay(500);
-  noTone(BUZZER_PIN);
-  delay(500);
-  tone(BUZZER_PIN, 500);
-  delay(500);
-  noTone(BUZZER_PIN);
-  debugPrint("Buzzer test passed");
-
-  debugPrint("Testing motors (forward)...");
-  moveForward(100);
-  delay(1000);
-  moveStop();
-  debugPrint("Motor forward test passed");
-
-  debugPrint("Testing motors (backward)...");
-  moveBackward(100);
-  delay(1000);
-  moveStop();
-  debugPrint("Motor backward test passed");
-
-  debugPrint("Testing motors (left)...");
-  moveLeft(100);
-  delay(1000);
-  moveStop();
-  debugPrint("Motor left test passed");
-
-  debugPrint("Testing motors (right)...");
-  moveRight(100);
-  delay(1000);
-  moveStop();
-  debugPrint("Motor right test passed");
-
-  debugPrint("Testing shooting...");
-  triggerShoot();
-  debugPrint("Shooting test passed");
-
-  debugPrint("Testing ultrasonic...");
-  int dist = readUltrasonic();
-  if (dist > 0 && dist < 200) {
-    debugPrint("Distance: ");
-    debugPrint(String(dist).c_str());
-    debugPrint(" cm");
-  } else {
-    debugPrint("Ultrasonic failed");
-  }
-
-  debugPrint("Testing IR sensors...");
-  readIRSensors();
-  if (leftSensorValue > 100 && middleSensorValue > 100 && rightSensorValue > 100) {
-    debugPrint("IR sensors test passed");
-  } else {
-    debugPrint("IR sensors failed");
-  }
-}
-
-// === Bluetooth Input Handler ===
-void processBluetoothInput() {
-  if (SerialBT.available()) {
-    char c = SerialBT.read();
-    if (c == '\n') {
-      processInput(scriptBuffer);
-      scriptBuffer = "";
-    } else {
-      scriptBuffer += c;
+  int colon = line.indexOf(':');
+  if (colon == -1) {
+    if (line.startsWith("goto:")) {
+      String labelName = line.substring(4);
+      labelName.trim();
+      for (int i = 0; i < labelCount; i++) {
+        if (labels[i].name == labelName) {
+          scriptIndex = labels[i].line;
+          debugPrint("GOTO to ");
+          debugPrint(labelName.c_str());
+          debugPrint("\n");
+          return;
+        }
+      }
+      debugPrint("Label not found: ");
+      debugPrint(labelName.c_str());
+      debugPrint("\n");
     }
-  }
-}
-
-void getStatus() {
-  sendState();
-}
-
-void processCommand(String command, String params) {
-  if (command == "setLED") {
-    setLED(params);
-  } else if (command == "echo") {
-    echo(params);
-  } else if (command == "getStatus") {
-    getStatus();
-  } else if (command == "getCapabilities") {
-    sendCapabilities();
-  } else if (command == "forward") {
-    int speed = params.toInt();
-    moveForward(speed);
-  } else if (command == "backward") {
-    int speed = params.toInt();
-    moveBackward(speed);
-  } else if (command == "left") {
-    int speed = params.toInt();
-    moveLeft(speed);
-  } else if (command == "right") {
-    int speed = params.toInt();
-    moveRight(speed);
-  } else if (command == "stop") {
-    moveStop();
-  } else if (command == "clockwise") {
-    int speed = params.toInt();
-    moveClockwise(speed);
-  } else if (command == "counter-clockwise") {
-    int speed = params.toInt();
-    moveCounterClockwise(speed);
-  } else if (command == "servo") {
-    int angle = params.toInt();
-    setServoAngle(angle);
-  } else if (command == "shoot") {
-    int duration = params.toInt();
-    if (duration > 0) {
-      shootDuration = duration;
-      triggerShoot();
-    }
-  } else if (command == "buzzer") {
-    int tone = 0;
-    int duration = 1000;
-    int comma = params.indexOf(',');
-    if (comma != -1) {
-      tone = params.substring(0, comma).toInt();
-      duration = params.substring(comma + 1).toInt();
-    } else {
-      tone = params.toInt();
-    }
-    if (tone > 0 && duration > 0) {
-      playBuzzer(tone, duration);
-    }
-  } else if (command == "camera") {
-    if (params == "start") {
-      // This would be handled by sending 'C' to camera ESP32
-      Serial2.write('C');
-      debugPrint("Sent 'C' to camera ESP32");
-      sendResponse("OK", "Camera capture started");
-    } else if (params == "stop") {
-      // This would be handled by sending 'S' to camera ESP32
-      Serial2.write('S');
-      debugPrint("Sent 'S' to camera ESP32");
-      sendResponse("OK", "Camera capture stopped");
-    } else {
-      sendResponse("ERROR", "Invalid camera parameter");
-    }
-  } else if (command == "track") {
-    if (params == "on") {
-      isTracking = true;
-      sendResponse("OK", "Tracking mode enabled");
-    } else if (params == "off") {
-      isTracking = false;
-      sendResponse("OK", "Tracking mode disabled");
-    } else {
-      sendResponse("ERROR", "Invalid track parameter");
-    }
-  } else if (command == "avoid") {
-    if (params == "on") {
-      isAvoiding = true;
-      sendResponse("OK", "Avoiding mode enabled");
-    } else if (params == "off") {
-      isAvoiding = false;
-      sendResponse("OK", "Avoiding mode disabled");
-    } else {
-      sendResponse("ERROR", "Invalid avoid parameter");
-    }
-  } else if (command == "follow") {
-    if (params == "on") {
-      isFollowing = true;
-      sendResponse("OK", "Following mode enabled");
-    } else if (params == "off") {
-      isFollowing = false;
-      sendResponse("OK", "Following mode disabled");
-    } else {
-      sendResponse("ERROR", "Invalid follow parameter");
-    }
-  } else if (command == "snapshot") {
-    // Send command to camera ESP32 to capture
-    Serial2.write('C'); // Trigger capture
-    debugPrint("Sent 'C' to camera ESP32");
-    sendResponse("OK", "Snapshot requested");
-  } else {
-    sendResponse("ERROR", "Unknown command type");
-  }
-}
-
-// === Parse Script Input ===
-void processInput(String commandLine) {
-  commandLine.trim();
-  if (commandLine.length() == 0) return;
-
-  int colonIndex = commandLine.indexOf(':');
-  if (colonIndex == -1) {
-    sendResponse("ERROR", "Invalid command format");
     return;
   }
 
-  String command = commandLine.substring(0, colonIndex);
-  String params = commandLine.substring(colonIndex + 1);
+  String cmd = line.substring(0, colon);
+  String params = line.substring(colon + 1);
 
-  if (command == "run") {
-    scriptBuffer = params;  // Load script
-    scriptRunning = true;
-    scriptIndex = 0;
-    labelCount = 0;
-    debugPrint("Script loaded. Starting execution.\n");
-  } else if (command == "stop") {
-    scriptRunning = false;
-    sendResponse("OK", "Script stopped");
+  if (cmd == "label") {
+    String labelName = params;
+    labelName.trim();
+    if (labelName.length() > 0) {
+      if (labelCount < 10) {
+        labels[labelCount].name = labelName;
+        labels[labelCount].line = scriptIndex;
+        labelCount++;
+        debugPrint("Label added: ");
+        debugPrint(labelName.c_str());
+        debugPrint("\n");
+      }
+    }
   } else {
-    processCommand(command, params);
+    processCommand(cmd, params);
   }
 }
 
-// === Execute Script Line by Line ===
+// === Execute Script Line-by-Line ===
 void executeScript() {
   if (scriptBuffer.length() == 0) {
     scriptRunning = false;
     return;
   }
 
-  // Split script into lines
   int start = 0;
   int end = 0;
   while (end < scriptBuffer.length()) {
     if (scriptBuffer[end] == '\n' || end == scriptBuffer.length() - 1) {
       String line = scriptBuffer.substring(start, end + 1);
-      line.trim();
-
-      if (line.length() > 0) {
-        // Check for label
-        if (line.startsWith("label:")) {
-          String labelName = line.substring(5);
-          labelName.trim();
-          if (labelName.length() > 0) {
-            if (labelCount < 10) {
-              labels[labelCount].name = labelName;
-              labels[labelCount].line = scriptIndex;
-              labelCount++;
-              debugPrint("Label added: ");
-              debugPrint(labelName.c_str());
-              debugPrint("\n");
-            }
-          }
-        } else {
-          // Parse command
-          int colon = line.indexOf(':');
-          if (colon != -1) {
-            String cmd = line.substring(0, colon);
-            String params = line.substring(colon + 1);
-            parseCommand(cmd, params);
-          } else {
-            // Check for GOTO
-            if (line.startsWith("goto:")) {
-              String labelName = line.substring(4);
-              labelName.trim();
-              for (int i = 0; i < labelCount; i++) {
-                if (labels[i].name == labelName) {
-                  scriptIndex = labels[i].line;
-                  debugPrint("GOTO to ");
-                  debugPrint(labelName.c_str());
-                  debugPrint("\n");
-                  return; // Jump
-                }
-              }
-              debugPrint("Label not found: ");
-              debugPrint(labelName.c_str());
-              debugPrint("\n");
-            }
-          }
-        }
-      }
-
+      parseCommand(line);
       start = end + 1;
       if (end == scriptBuffer.length() - 1) break;
     }
     end++;
   }
 
-  // Done with script
   scriptRunning = false;
-  debugPrint("Script execution complete.\n");
+  debugPrint("🏁 Script execution complete.\n");
 }
 
-// === Parse and Execute Individual Command ===
-void parseCommand(String command, String params) {
-  if (command == "forward") {
-    int speed = params.toInt();
-    moveForward(speed);
-  } else if (command == "backward") {
-    int speed = params.toInt();
-    moveBackward(speed);
-  } else if (command == "left") {
-    int speed = params.toInt();
-    moveLeft(speed);
-  } else if (command == "right") {
-    int speed = params.toInt();
-    moveRight(speed);
-  } else if (command == "stop") {
-    moveStop();
-  } else if (command == "clockwise") {
-    int speed = params.toInt();
-    moveClockwise(speed);
-  } else if (command == "counter-clockwise") {
-    int speed = params.toInt();
-    moveCounterClockwise(speed);
-  } else if (command == "servo") {
-    int angle = params.toInt();
-    setServoAngle(angle);
-  } else if (command == "shoot") {
-    int duration = params.toInt();
-    if (duration > 0) {
-      shootDuration = duration;
-      triggerShoot();
-    }
-  } else if (command == "buzzer") {
-    int tone = 0;
-    int duration = 1000;
-    int comma = params.indexOf(',');
-    if (comma != -1) {
-      tone = params.substring(0, comma).toInt();
-      duration = params.substring(comma + 1).toInt();
-    } else {
-      tone = params.toInt();
-    }
-    if (tone > 0 && duration > 0) {
-      playBuzzer(tone, duration);
-    }
-  } else if (command == "delay") {
-    int ms = params.toInt();
-    delay(ms);
-  } else if (command == "echo") {
-    sendResponse("OK", params);
-  } else {
-    sendResponse("ERROR", "Unknown command: " + command);
-  }
-}
-
-// === Setup Function ===
+// === Main Setup ===
 void setup() {
-  Serial.begin(115200);
-  delay(1000);
-  debugPrint("ESP32 Serial started at 115200 baud");
+  // Motor Pins
+  pinMode(18, OUTPUT);
+  pinMode(16, OUTPUT);
+  pinMode(5, OUTPUT);
+  pinMode(17, OUTPUT);
+  pinMode(19, OUTPUT);
 
   // LED
   pinMode(LED_BUILTIN, OUTPUT);
@@ -679,75 +343,46 @@ void setup() {
   delay(100);
   digitalWrite(LED_BUILTIN, LOW);
 
-  // Actuators
-  pinMode(SHOOT_PIN, OUTPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
-
-  // Motor Pins
-  pinMode(MOTOR_FL_FORWARD, OUTPUT);
-  pinMode(MOTOR_FL_BACKWARD, OUTPUT);
-  pinMode(MOTOR_FR_FORWARD, OUTPUT);
-  pinMode(MOTOR_FR_BACKWARD, OUTPUT);
-
-  // Sensor Inputs
-  pinMode(LEFT_SENSOR, INPUT);
-  pinMode(MIDDLE_SENSOR, INPUT);
-  pinMode(RIGHT_SENSOR, INPUT);
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-
-  // Servos
-  fixedServo.attach(FIXED_SERVO_PIN);
-  turnServo.attach(TURN_SERVO_PIN);
-  moveFixedServo(90);
-  moveTurnServo(90);
+  // UART2 (Camera)
+  Serial2.begin(115200, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
+  debugPrint("UART2 (Serial2) initialized for camera\n");
 
   // Bluetooth
-  SerialBT.begin("ESP32-Script-Rover");
-  debugPrint("Bluetooth Serial started");
+  SerialBT.begin("ESP32-Rev7");
+  debugPrint("Bluetooth Serial started\n");
 
-  // UART for camera (from other ESP32)
-  Serial2.begin(115200, SERIAL_8N1, 14, 13);  // RX:14, TX:13
-  debugPrint("UART (Serial2) initialized for camera");
-
-  // Self-test
-  debugPrint("Starting system self-test...");
-  performSelfTest();
-
-  moveStop();
-  debugPrint("System ready. Send script via Bluetooth.");
+  // Debug
+  Serial.begin(115200);
+  delay(1000);
+  debugPrint("Rev7: Full Script Engine Ready.\n");
+  debugPrint("Send: getCapabilities to see all commands.\n");
 }
 
 // === Main Loop ===
 void loop() {
-  // Handle UART image (from camera ESP32)
+  // Handle UART image (simulated)
   handleUartImage();
 
-  // Handle Bluetooth script input
-  processBluetoothInput();
-
-  // Update sensors
-  readUltrasonic();
-  readIRSensors();
-
-  // Blink LED
-  unsigned long currentMillis = millis();
-  if (currentMillis - lastBlinkTime >= ledPacing) {
-    lastBlinkTime = currentMillis;
-    ledState = !ledState;
-    digitalWrite(LED_BUILTIN, ledState);
-  }
-
-  // Process serial debug input
-  while (Serial.available() > 0) {
-    char inChar = (char)Serial.read();
-    if (inChar == '\n') {
-      processInput(scriptBuffer);
-      scriptBuffer = "";
+  // Handle Bluetooth input
+  if (SerialBT.available()) {
+    char c = SerialBT.read();
+    if (c == '\n') {
+      int colon = commandBuffer.indexOf(':');
+      if (colon != -1) {
+        String cmd = commandBuffer.substring(0, colon);
+        String params = commandBuffer.substring(colon + 1);
+        processCommand(cmd, params);
+      } else {
+        sendResponse("ERROR", "Invalid format: missing ':'");
+      }
+      commandBuffer = "";
     } else {
-      scriptBuffer += inChar;
+      commandBuffer += c;
     }
   }
+
+  // Blink LED
+  blinkLED();
 
   // If script is running, execute it
   if (scriptRunning) {
