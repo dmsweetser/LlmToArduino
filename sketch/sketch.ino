@@ -345,13 +345,11 @@ void setup() {
   delay(100);
   digitalWrite(LED_BUILTIN, LOW);
 
-  // UART2 (Camera)
-  Serial2.begin(115200, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
-  debugPrint("UART2 (Serial2) initialized for camera\n");
-
   // Bluetooth
   SerialBT.begin("ESP32-Rev7");
-  debugPrint("Bluetooth Serial started\n");
+
+  // UART2 (Camera)
+  Serial2.begin(115200, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
 
   // Debug
   debugPrint("Rev7: Full Script Engine Ready.\n");
@@ -361,7 +359,7 @@ void setup() {
 // === Main Loop ===
 void loop() {
   // Handle UART image
-  // handleUartImage();
+  handleUartImage();
 
   // Handle Bluetooth input
   if (SerialBT.available()) {
