@@ -19,6 +19,7 @@ String commandBuffer = "";
 // === UART for Camera (from ESP32-CAM) ===
 const int UART_RX_PIN = 14;
 const int UART_TX_PIN = 13;
+//HardwareSerial Serial2(2);
 
 // === Image Handling ===
 const int MAX_IMAGE_SIZE = 60000;
@@ -51,8 +52,8 @@ int labelCount = 0;
 
 // === Debug Print Helper ===
 void debugPrint(const char* message) {
-  Serial.print(message);
-  Serial.flush();
+  SerialBT.print(message);
+  SerialBT.flush();
 }
 
 // === Motor Control (Same as before) ===
@@ -164,9 +165,10 @@ void processCommand(String cmd, String params) {
   }
 }
 
-// === Handle UART Image from Camera ESP32 (Simulated) ===
+// === Handle UART Image from Camera ESP32 ===
 void handleUartImage() {
-  static bool simulate = true;
+  // static bool simulate = true;
+  static bool simulate = false;
   static unsigned long lastSimTime = 0;
 
   if (simulate && millis() - lastSimTime > 2000) {
@@ -325,7 +327,7 @@ void executeScript() {
   }
 
   scriptRunning = false;
-  debugPrint("🏁 Script execution complete.\n");
+  debugPrint("Script execution complete.\n");
 }
 
 // === Main Setup ===
@@ -352,16 +354,14 @@ void setup() {
   debugPrint("Bluetooth Serial started\n");
 
   // Debug
-  Serial.begin(115200);
-  delay(1000);
   debugPrint("Rev7: Full Script Engine Ready.\n");
   debugPrint("Send: getCapabilities to see all commands.\n");
 }
 
 // === Main Loop ===
 void loop() {
-  // Handle UART image (simulated)
-  handleUartImage();
+  // Handle UART image
+  // handleUartImage();
 
   // Handle Bluetooth input
   if (SerialBT.available()) {
