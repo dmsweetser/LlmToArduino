@@ -348,6 +348,8 @@ void setup() {
   // Bluetooth
   SerialBT.begin("ESP32-Rev7");
 
+  delay(20000);
+
   // UART2 (Camera)
   Serial2.begin(115200, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
 
@@ -358,11 +360,14 @@ void setup() {
 
 // === Main Loop ===
 void loop() {
+  debugPrint("Handling UART\n");
   // Handle UART image
   handleUartImage();
+  debugPrint("Done handling UART\n");
 
   // Handle Bluetooth input
   if (SerialBT.available()) {
+    debugPrint("Reading SerialBT\n");
     char c = SerialBT.read();
     if (c == '\n') {
       int colon = commandBuffer.indexOf(':');
@@ -378,10 +383,11 @@ void loop() {
       commandBuffer += c;
     }
   }
-
+  debugPrint("Blinking LED\n");
   // Blink LED
   blinkLED();
 
+  debugPrint("Handling existing script\n");
   // If script is running, execute it
   if (scriptRunning) {
     executeScript();
