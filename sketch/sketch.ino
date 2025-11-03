@@ -392,4 +392,6 @@ void loop() {
   if (scriptRunning) {
     executeScript();
   }
+
+  delay(5000);
 }
