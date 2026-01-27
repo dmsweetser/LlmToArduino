@@ -14,12 +14,10 @@ const int M4_Backward = 8;
 // === Bluetooth Serial ===
 BluetoothSerial SerialBT;
 
-String commandBuffer = "";
-
 // === UART for Camera (from ESP32-CAM) ===
 const int UART_RX_PIN = 14;
 const int UART_TX_PIN = 13;
-//HardwareSerial Serial2(2);
+HardwareSerial Serial2(2);
 
 // === Image Handling ===
 const int MAX_IMAGE_SIZE = 60000;
@@ -35,6 +33,16 @@ const int LED_BUILTIN = 2;
 bool ledState = false;
 int ledPacing = 1000;
 unsigned long lastBlinkTime = 0;
+
+// === Servo Control ===
+#include <ESP32Servo.h>
+Servo cameraServo;
+const int SERVO_PIN = 26;
+
+// === Line Tracking & Ultrasonic ===
+const int LINE_TRACKING_PIN = 34; // Adjust based on your actual connection
+const int ULTRASONIC_TRIG = 35;  // Adjust based on your actual connection
+const int ULTRASONIC_ECHO = 36;  // Adjust based on your actual connection
 
 // === Script Engine ===
 String scriptBuffer = "";
@@ -52,11 +60,11 @@ int labelCount = 0;
 
 // === Debug Print Helper ===
 void debugPrint(const char* message) {
-  SerialBT.print(message);
-  SerialBT.flush();
+  Serial.print(message);
+  Serial.flush();
 }
 
-// === Motor Control (Same as before) ===
+// === Motor Control ===
 void Move(int Dir, int Speed) {
   digitalWrite(16, LOW);
   analogWrite(19, Speed);
@@ -72,7 +80,7 @@ void sendResponse(String status, String message) {
   SerialBT.flush();
 }
 
-// === Process Command (New) ===
+// === Process Command ===
 void processCommand(String cmd, String params) {
   if (cmd == "forward") {
     int speed = params.toInt();
@@ -101,10 +109,18 @@ void processCommand(String cmd, String params) {
       "delay:ms\n"
       "run:script\n"
       "label:name\n"
-      "goto:name\n";
+      "goto:name\n"
+      "lineTracking:enable\n"
+      "ultrasonic:read\n";
     SerialBT.print(caps);
   } else if (cmd == "getStatus") {
-    sendResponse("OK", "led_pacing:" + String(ledPacing) + ", is_camera_active:false");
+    String caps =
+      "led_pacing:" + String(ledPacing) + ", "
+      "is_camera_active:" + String(isCapturing) + ", "
+      "servo_angle:" + String(cameraServo.read()) + ", "
+      "line_tracking:" + String(digitalRead(LINE_TRACKING_PIN)) + ", "
+      "ultrasonic:" + String(getUltrasonicDistance());
+    sendResponse("OK", caps);
   } else if (cmd == "echo") {
     sendResponse("OK", params);
   } else if (cmd == "setLED") {
@@ -118,7 +134,7 @@ void processCommand(String cmd, String params) {
   } else if (cmd == "servo") {
     int angle = params.toInt();
     if (angle >= 0 && angle <= 180) {
-      // Mock servo write
+      cameraServo.write(angle);
       sendResponse("OK", "servo: " + String(angle));
     } else {
       sendResponse("ERROR", "Angle must be 0-180");
@@ -157,9 +173,23 @@ void processCommand(String cmd, String params) {
     labelCount = 0;
     debugPrint("Script loaded. Starting execution.\n");
     sendResponse("OK", "Script loaded and running");
-  } else if (cmd == "stop") {
-    scriptRunning = false;
-    sendResponse("OK", "Script stopped");
+  } else if (cmd == "lineTracking") {
+    if (params == "enable") {
+      pinMode(LINE_TRACKING_PIN, INPUT);
+      sendResponse("OK", "Line tracking enabled");
+    } else if (params == "disable") {
+      pinMode(LINE_TRACKING_PIN, INPUT_PULLUP);
+      sendResponse("OK", "Line tracking disabled");
+    } else {
+      sendResponse("ERROR", "Invalid line tracking parameter");
+    }
+  } else if (cmd == "ultrasonic") {
+    if (params == "read") {
+      float distance = getUltrasonicDistance();
+      sendResponse("OK", "ultrasonic:" + String(distance));
+    } else {
+      sendResponse("ERROR", "Invalid ultrasonic parameter");
+    }
   } else {
     sendResponse("ERROR", "Unknown command: " + cmd);
   }
@@ -167,31 +197,6 @@ void processCommand(String cmd, String params) {
 
 // === Handle UART Image from Camera ESP32 ===
 void handleUartImage() {
-  // static bool simulate = true;
-  static bool simulate = false;
-  static unsigned long lastSimTime = 0;
-
-  if (simulate && millis() - lastSimTime > 2000) {
-    debugPrint("Simulating image stream...\n");
-    uint32_t size = 10240;
-    expectedImageSize = size;
-    imageStarted = true;
-    imageIndex = 0;
-
-    Serial2.write((size >> 24) & 0xFF);
-    Serial2.write((size >> 16) & 0xFF);
-    Serial2.write((size >> 8) & 0xFF);
-    Serial2.write(size & 0xFF);
-
-    for (int i = 0; i < size; i++) {
-      Serial2.write(random(0, 255));
-      delay(1);
-    }
-    Serial2.write('E');
-    debugPrint("Simulated image sent\n");
-    lastSimTime = millis();
-  }
-
   while (Serial2.available() > 0) {
     char c = Serial2.read();
 
@@ -258,6 +263,19 @@ void blinkLED() {
     digitalWrite(LED_BUILTIN, ledState);
     lastBlinkTime = now;
   }
+}
+
+// === Ultrasonic Distance Measurement ===
+float getUltrasonicDistance() {
+  digitalWrite(ULTRASONIC_TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(ULTRASONIC_TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(ULTRASONIC_TRIG, LOW);
+
+  unsigned long duration = pulseIn(ULTRASONIC_ECHO, HIGH);
+  float distance = duration * 0.034 / 2; // Convert to cm
+  return distance;
 }
 
 // === Parse and Execute One Script Line ===
@@ -327,7 +345,7 @@ void executeScript() {
   }
 
   scriptRunning = false;
-  debugPrint("Script execution complete.\n");
+  debugPrint("🏁 Script execution complete.\n");
 }
 
 // === Main Setup ===
@@ -345,29 +363,39 @@ void setup() {
   delay(100);
   digitalWrite(LED_BUILTIN, LOW);
 
-  // Bluetooth
-  SerialBT.begin("ESP32-Rev7");
+  // Servo
+  cameraServo.attach(SERVO_PIN);
+  cameraServo.write(90); // Default position
 
-  delay(20000);
+  // Line Tracking
+  pinMode(LINE_TRACKING_PIN, INPUT);
+
+  // Ultrasonic
+  pinMode(ULTRASONIC_TRIG, OUTPUT);
+  pinMode(ULTRASONIC_ECHO, INPUT);
 
   // UART2 (Camera)
   Serial2.begin(115200, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
+  debugPrint("UART2 (Serial2) initialized for camera\n");
+
+  // Bluetooth
+  SerialBT.begin("ESP32-Robot");
+  debugPrint("Bluetooth Serial started\n");
 
   // Debug
-  debugPrint("Rev7: Full Script Engine Ready.\n");
+  Serial.begin(115200);
+  delay(1000);
+  debugPrint("ESP32-Robot: Full System Ready.\n");
   debugPrint("Send: getCapabilities to see all commands.\n");
 }
 
 // === Main Loop ===
 void loop() {
-  debugPrint("Handling UART\n");
-  // Handle UART image
+  // Handle UART image from camera
   handleUartImage();
-  debugPrint("Done handling UART\n");
 
   // Handle Bluetooth input
   if (SerialBT.available()) {
-    debugPrint("Reading SerialBT\n");
     char c = SerialBT.read();
     if (c == '\n') {
       int colon = commandBuffer.indexOf(':');
@@ -383,15 +411,12 @@ void loop() {
       commandBuffer += c;
     }
   }
-  debugPrint("Blinking LED\n");
+
   // Blink LED
   blinkLED();
 
-  debugPrint("Handling existing script\n");
   // If script is running, execute it
   if (scriptRunning) {
     executeScript();
   }
-
-  delay(5000);
 }

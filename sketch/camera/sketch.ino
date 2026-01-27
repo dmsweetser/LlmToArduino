@@ -20,7 +20,7 @@
 #define PCLK    27
 
 // === UART for Communication (to main ESP32) ===
-// HardwareSerial Serial2(2); // RX: GPIO14, TX: GPIO13
+HardwareSerial Serial2(2); // RX: GPIO14, TX: GPIO13
 
 // === Camera Configuration ===
 camera_config_t config = {
@@ -50,6 +50,7 @@ camera_config_t config = {
 // === State Flags ===
 bool isCapturing = false;
 unsigned long captureStartTime = 0;
+const int CAPTURE_TIMEOUT = 5000; // 5 seconds
 
 // === Setup Function ===
 void setup() {
@@ -99,29 +100,36 @@ void loop() {
 
   // Capture image if requested
   if (isCapturing) {
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (fb) {
-      // Send image size (4 bytes, big-endian)
-      uint32_t size = fb->len;
-      Serial2.write((size >> 24) & 0xFF);
-      Serial2.write((size >> 16) & 0xFF);
-      Serial2.write((size >> 8) & 0xFF);
-      Serial2.write(size & 0xFF);
-
-      // Send image data
-      Serial2.write(fb->buf, fb->len);
-
-      // Send end marker
-      Serial2.write('E');
-
-      // Release buffer
-      esp_camera_fb_return(fb);
-
-      Serial.println("Image sent!");
+    if (millis() - captureStartTime > CAPTURE_TIMEOUT) {
+      Serial.println("Capture timeout reached");
       isCapturing = false;
-      digitalWrite(13, HIGH); // Turn off LED
+      digitalWrite(13, HIGH);
     } else {
-      Serial.println("Failed to get camera frame");
+      camera_fb_t *fb = esp_camera_fb_get();
+      if (fb) {
+        // Send image size (4 bytes, big-endian)
+        uint32_t size = fb->len;
+        Serial2.write((size >> 24) & 0xFF);
+        Serial2.write((size >> 16) & 0xFF);
+        Serial2.write((size >> 8) & 0xFF);
+        Serial2.write(size & 0xFF);
+
+        // Send image data
+        Serial2.write(fb->buf, fb->len);
+
+        // Send end marker
+        Serial2.write('E');
+
+        // Release buffer
+        esp_camera_fb_return(fb);
+
+        Serial.println("Image sent!");
+        isCapturing = false;
+        digitalWrite(13, HIGH); // Turn off LED
+      } else {
+        Serial.println("Failed to get camera frame");
+        delay(100); // Wait before retrying
+      }
     }
   }
 

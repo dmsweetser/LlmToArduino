@@ -1,7 +1,6 @@
 venv
 polynomial_constants.json
 __pycache__
-config
 output.txt
 script.log
 model

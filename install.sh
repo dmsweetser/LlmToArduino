@@ -2,15 +2,14 @@
 
 set -euo pipefail
 
-# === Configuration ===
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="$SCRIPT_DIR/config"
 SKETCH_DIR="$SCRIPT_DIR/sketch"
 REQUIREMENTS_FILE="$SCRIPT_DIR/requirements.txt"
-LLM_MODEL="Qwen2.5-7B-Instruct-IQ4_XS.gguf"
-LLM_URL="https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-IQ4_XS.gguf?download=true"
-
-# === Functions ===
+LLM_MODEL="Magistral-Small-2509-Q4_K_M.gguf"
+LLM_URL="https://huggingface.co/unsloth/Magistral-Small-2509-GGUF/resolve/main/Magistral-Small-2509-Q4_K_M.gguf?download=true"
+MMPROJ_MODEL="mmproj-F16.gguf"
+MMPROJ_URL="https://huggingface.co/unsloth/Magistral-Small-2509-GGUF/resolve/main/mmproj-F16.gguf?download=true"
 
 error_exit() {
     echo "Error: $1" >&2
@@ -21,11 +20,6 @@ info() {
     echo "INFO: $1"
 }
 
-# === Step 1: Create config directory ===
-info "Creating config directory..."
-mkdir -p "$CONFIG_DIR"
-
-# === Step 2: Check for Python and virtual environment ===
 info "Checking for Python..."
 if ! command -v python3 &> /dev/null; then
     error_exit "Python3 is not installed. Please install Python3 before running this script."
@@ -42,7 +36,6 @@ else
     info "Virtual environment already exists."
 fi
 
-# === Step 3: Activate virtual environment ===
 info "Activating virtual environment..."
 source venv/bin/activate
 if [ $? -ne 0 ]; then
@@ -50,7 +43,6 @@ if [ $? -ne 0 ]; then
 fi
 info "Virtual environment activated successfully."
 
-# === Step 4: Install Python packages ===
 info "Installing required Python packages..."
 if [ ! -f "$REQUIREMENTS_FILE" ]; then
     error_exit "requirements.txt not found in the current directory."
@@ -62,18 +54,14 @@ if [ $? -ne 0 ]; then
 fi
 info "Python packages installed successfully."
 
-# === Step 5: Install Arduino CLI ===
 info "Installing Arduino CLI..."
 
-# Check if arduino-cli is already installed
 if ! command -v arduino-cli &> /dev/null; then
-    # Download arduino-cli
     curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
 else
     info "Arduino CLI already installed."
 fi
 
-# === Step 6: Install Arduino cores and libraries ===
 info "Installing Arduino AVR core..."
 if ! arduino-cli core install arduino:avr; then
     error_exit "Failed to install arduino:avr core."
@@ -96,9 +84,6 @@ fi
 
 info "Arduino CLI setup complete."
 
-# === Step 7: Download LLM model ===
-info "Downloading LLM model..."
-
 if [ ! -f "$LLM_MODEL" ]; then
     info "Downloading LLM model..."
     if ! curl -fsSL "$LLM_URL" -o "$LLM_MODEL"; then
@@ -109,41 +94,40 @@ else
     info "LLM model already exists."
 fi
 
-# === Step 8: Display board list and prompt user for port and FQBN ===
-info "Detecting connected Arduino boards..."
-
-# Get the board list and display it
-if ! arduino-cli board list; then
-    error_exit "Failed to detect Arduino boards."
+if [ ! -f "$MMPROJ_MODEL" ]; then
+    info "Downloading MMPROJ model..."
+    if ! curl -fsSL "$MMPROJ_URL" -o "$MMPROJ_MODEL"; then
+        error_exit "Failed to download MMPROJ model."
+    fi
+    info "MMPROJ model downloaded successfully."
+else
+    info "MMPROJ model already exists."
 fi
 
-# Prompt user for port and FQBN
-read -p "Enter the port (e.g., /dev/ttyUSB0, COM3): " port
-read -p "Enter the FQBN (e.g., arduino:avr:mega): " fqbn
+read -p "Please connect the camera board and press enter..." wait
 
-# Validate input
-if [[ -z "$port" || -z "$fqbn" ]]; then
-    error_exit "Port and FQBN are required."
+info "Compiling camera sketch..."
+if ! arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"; then
+    error_exit "Failed to compile camera sketch."
 fi
 
-# Save to config files
-echo "$port" > "$CONFIG_DIR/port.txt"
-echo "$fqbn" > "$CONFIG_DIR/fqbn.txt"
-
-info "Port and FQBN saved to config directory."
-
-# === Step 9: Compile and upload sketch ===
-info "Compiling sketch..."
-if ! arduino-cli compile --fqbn "$fqbn" "$SKETCH_DIR"; then
-    error_exit "Failed to compile sketch."
+info "Uploading camera sketch..."
+if ! arduino-cli upload -p "/dev/ttyUSB0" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"; then
+    error_exit "Failed to upload camera sketch."
 fi
 
-info "Uploading sketch..."
-if ! arduino-cli upload -p "$port" --fqbn "$fqbn" "$SKETCH_DIR"; then
-    error_exit "Failed to upload sketch."
+read -p "Please connect the main board, disconnect the camera board from the main board, and press enter..." wait
+
+info "Compiling main sketch..."
+if ! arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"; then
+    error_exit "Failed to compile main sketch."
 fi
 
-info "Sketch uploaded successfully."
+info "Uploading main sketch..."
+if ! arduino-cli upload -p "/dev/ttyUSB0" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"; then
+    error_exit "Failed to upload main sketch."
+fi
 
-# === Final message ===
+info "Sketches uploaded successfully."
+
 info "Installation and upload completed successfully."
