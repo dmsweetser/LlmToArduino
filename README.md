@@ -1,7 +1,3 @@
-Here’s your revised **README.md**, updated to reflect the installation and usage details from your batch scripts, and to ensure clarity and accuracy for users:
-
----
-
 # LlmToArduino
 
 **LlmToArduino** is a Python-based project that bridges the power of Large Language Models (LLMs) with Arduino hardware. It enables natural language interaction with Arduino devices, allowing users to control sensors, actuators, and displays using conversational commands. The system is designed to be extensible, creative, and user-friendly, making it ideal for hobbyists, educators, and developers interested in AI and embedded systems.
