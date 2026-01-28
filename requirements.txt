@@ -4,3 +4,4 @@ llama-cpp-python
 xmltodict
 openai-whisper
 pyaudio
+pillow
