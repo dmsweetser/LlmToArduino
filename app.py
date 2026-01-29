@@ -314,63 +314,93 @@ class HardwareCommunicator:
         LoggingSystem.log(f"Failed to fetch capabilities for device {self.device_id} after retries.", LogLevel.ERROR)
         return None
 
-class MultimodalProcessor:
-    """Handles multimodal processing including image analysis"""
+class UnifiedModelProcessor:
+    """Handles both text and multimodal processing with a single model"""
 
-    def __init__(self, llm_processor: 'LLMProcessor') -> None:
-        self.llm_processor = llm_processor
-        self.model_path = "Magistral-Small-2509-Q4_K_M.gguf"
-        self.mmproj_path = "mmproj-F16.gguf"
+    def __init__(self, model_path: str, mmproj_path: str = None, context_size: int = 4096) -> None:
+        self.model_path = model_path
+        self.mmproj_path = mmproj_path
         self.llm = None
-        self._initialize_multimodal_model()
+        self.context_size = context_size
+        self._initialize_model()
 
-    def _initialize_multimodal_model(self) -> None:
-        """Initialize the multimodal model"""
+    def _initialize_model(self) -> None:
+        """Initialize the unified model"""
         try:
-            self.llm = Llama(
-                model_path=self.model_path,
-                mmproj_path=self.mmproj_path,
-                n_gpu_layers=-1,  # Offload all layers to GPU if possible
-                verbose=False
-            )
-        except Exception as e:
-            LoggingSystem.log(f"Error initializing multimodal model: {e}", LogLevel.ERROR)
+            kwargs = {
+                'model_path': self.model_path,
+                'n_ctx': self.context_size,
+                'n_gpu_layers': -1,
+                'verbose': False
+            }
 
-    def image_to_base64_data_uri(self, file_path: str) -> str:
-        """Convert a local image file to a data URI"""
-        with open(file_path, "rb") as img_file:
-            base64_data = base64.b64encode(img_file.read()).decode('utf-8')
-        return f"data:image/png;base64,{base64_data}"
+            if self.mmproj_path:
+                kwargs['mmproj_path'] = self.mmproj_path
+
+            self.llm = Llama(**kwargs)
+            LoggingSystem.log("Unified model initialized successfully.", LogLevel.INFO)
+        except Exception as e:
+            LoggingSystem.log(f"Error initializing unified model: {e}", LogLevel.ERROR)
+            raise
+
+    def generate_response(self, prompt_xml: str, is_multimodal: bool = False) -> str:
+        """Generate response from prompt (handles both text and multimodal)"""
+        if not self.llm:
+            raise Exception("Model not initialized")
+
+        response_text = ""
+        for response in self.llm.create_completion(
+            prompt_xml,
+            max_tokens=2048,
+            stream=True,
+            temperature=0.7,
+            repeat_penalty=1.05,
+            top_p=0.8,
+            top_k=20
+        ):
+            token = response['choices'][0]['text']
+            response_text += token
+            if "</response>" in response_text or "</ response>" in response_text:
+                break
+
+        return response_text.strip()
 
     def process_image(self, image_path: str, description: str = "") -> Dict[str, Any]:
-        """Process an image and get a description from the multimodal model"""
+        """Process an image using the unified model"""
         try:
             if not self.llm:
-                raise Exception("Multimodal model not initialized")
+                raise Exception("Model not initialized")
 
             # Convert image to data URI
-            data_uri = self.image_to_base64_data_uri(image_path)
+            with open(image_path, "rb") as img_file:
+                base64_data = base64.b64encode(img_file.read()).decode('utf-8')
+            data_uri = f"data:image/png;base64,{base64_data}"
 
-            # Define messages for the multimodal model
-            messages = [
-                {"role": "system", "content": "You are an assistant who perfectly describes images."},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": data_uri}},
-                        {"type": "text", "text": description or "Describe this image in detail please."}
-                    ]
-                }
-            ]
+            # Create multimodal prompt
+            prompt_xml = f"""
+            <prompt>
+                <system_instructions>
+                    You are analyzing an image. Provide a detailed description including:
+                    - Main objects present
+                    - Colors and lighting
+                    - Emotional tone if applicable
+                    - Any unusual or interesting features
+                </system_instructions>
+                <image_description>{description or "Describe this image in detail"}</image_description>
+                <image_data>{data_uri}</image_data>
+            </prompt>
+            """
 
-            # Generate the completion
-            completion = self.llm.create_chat_completion(
-                messages=messages,
-                temperature=0.7
-            )
+            # Get response
+            response = self.generate_response(prompt_xml, is_multimodal=True)
 
-            # Extract the description
-            image_description = completion['choices'][0]['message']['content']
+            # Parse response (simple version - you might want to improve this)
+            if "<description>" in response:
+                start = response.find("<description>") + len("<description>")
+                end = response.find("</description>")
+                image_description = response[start:end].strip()
+            else:
+                image_description = response
 
             # Load image metadata
             with Image.open(image_path) as img:
@@ -388,31 +418,189 @@ class MultimodalProcessor:
             LoggingSystem.log(f"Error processing image: {e}", LogLevel.ERROR)
             return {"error": str(e)}
 
-class LLMProcessor:
-    """Handles all LLM operations with functional approach"""
+class DialogueEngine:
+    """Manages conversation flow with improved memory handling"""
 
-    def __init__(self, model_path: str, context_size: int = 4096) -> None:
-        self.llm = Llama(model_path=model_path, n_ctx=context_size)
-        self.multimodal_processor = MultimodalProcessor(self)
+    def __init__(self, model_processor: UnifiedModelProcessor, hardware_devices: List[HardwareCommunicator], state_manager: StateManager) -> None:
+        self.model_processor = model_processor
+        self.hardware_devices = {dev.device_id: dev for dev in hardware_devices}
+        self.state_manager = state_manager
+        self.conversation_history = []
+        self.autonomous_mode = True
+        self.memory_lock = Lock()
+        self.current_task = None
 
-    def generate_response(self, prompt_xml: str) -> str:
-        response_text = ""
-        for response in self.llm.create_completion(
-            prompt_xml,
-            max_tokens=2048,
-            stream=True,
-            temperature=0.7,
-            repeat_penalty=1.05,
-            top_p=0.8,
-            top_k=20
-        ):
-            token = response['choices'][0]['text']
-            response_text += token
-            if "</response>" in response_text or "</ response>" in response_text:
-                break
-        return response_text
+        # Initialize with hardware capabilities
+        self._update_hardware_capabilities()
 
-    def validate_response(self, response_text: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    def _update_hardware_capabilities(self) -> None:
+        """Update hardware capabilities in memory"""
+        for device_id, device in self.hardware_devices.items():
+            capabilities = device.get_capabilities()
+            if capabilities:
+                self.state_manager.add_memory_entry(
+                    MemoryDomain.HARDWARE_MEMORY,
+                    f"Hardware device {device_id}",
+                    {"capabilities": capabilities},
+                    metadata={"id": device_id, "type": "Arduino"}
+                )
+
+    def _get_conversation_context(self) -> Dict[str, Any]:
+        """Get relevant context from memory for current conversation"""
+        return {
+            "short_term": self.state_manager.get_memory_summary(
+                MemoryDomain.SHORT_TERM_MEMORY,
+                max_entries=3
+            ),
+            "relevant_experiences": self.state_manager.search_memory(
+                "recent conversation",
+                MemoryDomain.EPISODIC_MEMORY,
+                threshold=0.3
+            )[:2],
+            "core": self.state_manager.get_memory_summary(
+                MemoryDomain.CORE_MEMORY,
+                max_entries=5
+            ),
+            "current_task": self.current_task
+        }
+
+    def _get_current_task(self) -> str:
+        """Get the current task from memory"""
+        return self.current_task or "General interaction"
+
+    def _set_current_task(self, task: str) -> None:
+        """Set the current task in memory"""
+        self.current_task = task
+        self.state_manager.add_memory_entry(
+            MemoryDomain.SHORT_TERM_MEMORY,
+            f"Current task: {task}",
+            {"task": task, "timestamp": time.time()},
+            confidence=0.95
+        )
+
+    def format_prompt(self, user_command: str = None) -> str:
+        context = self._get_conversation_context()
+
+        # Format conversation history
+        history_str = "\n".join(self.conversation_history[-5:]) if self.conversation_history else "No recent conversation history"
+
+        prompt_xml = f"""
+        <prompt>
+            <system_instructions>
+                You are an autonomous AI assistant with complex memory systems.
+                Your core identity and purpose are defined in your core memories:
+                {json.dumps(context['core'], indent=2)}
+
+                Current context:
+                - Short-term memories: {json.dumps(context['short_term'], indent=2)}
+                - Relevant experiences: {json.dumps(context['relevant_experiences'], indent=2)}
+                - Current task: {context['current_task']}
+
+                Conversation History:
+                {history_str}
+
+                Available hardware devices:
+                {json.dumps(self.state_manager.get_state()["hardware_devices"], indent=2)}
+
+                Respond in XML format with these elements:
+                <response>
+                    <chat>Your response</chat>
+                    <hardware device_id="arduino1">
+                        <commands>
+                            <command>setLED:1000</command>
+                        </commands>
+                    </hardware>
+                    <memory>
+                        <operation>add|query|remove</operation>
+                        <query>Search query</query>
+                        <domain>MEMORY_DOMAIN</domain>
+                        <details>{{"key": "value"}}</details>
+                    </memory>
+                    <state>
+                        <currentMood>Curious</currentMood>
+                        <whatYouWonderAbout>Question</whatYouWonderAbout>
+                        <primaryDirective>Objective</primaryDirective>
+                        <currentTask>Current task</currentTask>
+                    </state>
+                </response>
+            </system_instructions>
+            {'<user_input>' + user_command + '</user_input>' if user_command else ''}
+        </prompt>
+        """
+        return prompt_xml
+
+    def process_instruction(self, user_command: str = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        prompt_xml = self.format_prompt(user_command)
+        LoggingSystem.log('Generated XML prompt:' + prompt_xml, LogLevel.INFO)
+
+        response_text = self.model_processor.generate_response(prompt_xml)
+        LoggingSystem.log("Model generated response:", LogLevel.INFO)
+        LoggingSystem.log(response_text, LogLevel.INFO)
+
+        response_dict, new_state = self._validate_response(response_text)
+        if not response_dict:
+            return {'chat': "I couldn't process that request.", 'commands': [], 'memory_operation': None}, {}
+
+        # Process memory operations if any
+        memory_operation = response_dict.get('memory_operation', None)
+        if memory_operation:
+            self._handle_memory_operation(memory_operation)
+
+        # Execute hardware commands if any
+        if response_dict.get('commands'):
+            self._execute_commands(response_dict['commands'])
+
+        # Update state with new values
+        if new_state:
+            for key, value in new_state.items():
+                if value is not None and key != 'currentTask':  # Handle current task separately
+                    self.state_manager.set_state_value(key, value)
+            if 'currentTask' in new_state and new_state['currentTask']:
+                self._set_current_task(new_state['currentTask'])
+
+        # Store conversation in episodic memory
+        with self.memory_lock:
+            self.state_manager.add_memory_entry(
+                MemoryDomain.EPISODIC_MEMORY,
+                "Interaction",
+                {
+                    "user": user_command,
+                    "assistant": response_dict.get('chat', ''),
+                    "commands": response_dict.get('commands', []),
+                    "autonomous": user_command is None,
+                    "timestamp": time.time()
+                }
+            )
+
+        return response_dict, new_state
+
+    def _execute_commands(self, commands: List[Tuple[str, str]]) -> None:
+        """Execute hardware commands"""
+        for cmd, device_id in commands:
+            if device_id in self.hardware_devices:
+                LoggingSystem.log(f"Sending command to device {device_id}: {cmd}", LogLevel.INFO)
+                commands_xml = f"<commands><command>{cmd}</command></commands>"
+                arduino_response = self.hardware_devices[device_id].send_command(commands_xml)
+                LoggingSystem.log(f"Device {device_id} response: {arduino_response}", LogLevel.INFO)
+
+                if arduino_response:
+                    self.conversation_history.append(f"Device {device_id}: {arduino_response}")
+                    # Store in sensory memory
+                    with self.memory_lock:
+                        self.state_manager.add_memory_entry(
+                            MemoryDomain.SENSORY_MEMORY,
+                            f"Device {device_id} response",
+                            {"response": arduino_response, "command": cmd},
+                            metadata={"device_id": device_id}
+                        )
+                else:
+                    self.conversation_history.append(f"Device {device_id}: No response received.")
+            else:
+                LoggingSystem.log(f"Unknown device ID: {device_id}", LogLevel.WARNING)
+                self.conversation_history.append(f"Error: Unknown device {device_id}")
+
+    def _validate_response(self, response_text: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Validate and parse the XML response"""
         try:
             response_text = response_text.replace("</ response>", "</response>")
             start_idx = response_text.find('<response>')
@@ -455,6 +643,7 @@ class LLMProcessor:
                 'current_mood': state_node.find('currentMood').text if state_node is not None and state_node.find('currentMood') is not None else None,
                 'current_wonder': state_node.find('whatYouWonderAbout').text if state_node is not None and state_node.find('whatYouWonderAbout') is not None else None,
                 'primary_directive': state_node.find('primaryDirective').text if state_node is not None and state_node.find('primaryDirective') is not None else None,
+                'currentTask': state_node.find('currentTask').text if state_node is not None and state_node.find('currentTask') is not None else None
             }
 
             return {
@@ -466,186 +655,11 @@ class LLMProcessor:
             LoggingSystem.log(f"XML Parse Error: {e}\nProblematic XML: {response_text}", LogLevel.ERROR)
             return None, None
         except Exception as e:
-            LoggingSystem.log(f"Invalid XML response from LLM: {e}", LogLevel.ERROR)
+            LoggingSystem.log(f"Invalid XML response from model: {e}", LogLevel.ERROR)
             return None, None
 
-    def extract_text_from_response(self, response_text: str) -> str:
-        try:
-            root = ET.fromstring(response_text)
-            chat = root.find('chat').text if root.find('chat') is not None else ""
-            return chat
-        except:
-            return response_text
-
-class DialogueEngine:
-    """Manages conversation flow and LLM interaction"""
-
-    def __init__(self, llm_processor: LLMProcessor, hardware_devices: List[HardwareCommunicator], state_manager: StateManager) -> None:
-        self.llm_processor = llm_processor
-        self.hardware_devices = {dev.device_id: dev for dev in hardware_devices}
-        self.state_manager = state_manager
-        self.conversation_history = []
-        self.autonomous_mode = True
-        self.memory_lock = Lock()
-
-        # Initialize with hardware capabilities
-        self._update_hardware_capabilities()
-
-    def _update_hardware_capabilities(self) -> None:
-        """Update hardware capabilities in memory"""
-        for device_id, device in self.hardware_devices.items():
-            capabilities = device.get_capabilities()
-            if capabilities:
-                self.state_manager.add_memory_entry(
-                    MemoryDomain.HARDWARE_MEMORY,
-                    f"Hardware device {device_id}",
-                    {"capabilities": capabilities},
-                    metadata={"id": device_id, "type": "Arduino"}
-                )
-
-    def format_prompt(self, user_command: str = None) -> str:
-        current_state = self.state_manager.get_state()
-
-        # Get memory summaries for all domains
-        memory_summaries = {
-            domain.value: self.state_manager.get_memory_summary(domain)
-            for domain in MemoryDomain
-        }
-
-        # Get hardware devices
-        hardware_devices = current_state["hardware_devices"]
-
-        # Format conversation history
-        history_str = "\n".join(self.conversation_history[-10:]) if self.conversation_history else "No conversation history yet"
-
-        prompt_xml = f"""
-        <prompt>
-            <system_instructions>
-                You are an autonomous AI assistant with complex memory systems and multimodal capabilities.
-                Your core identity and purpose are defined in your core memories:
-                {self.state_manager.get_memory_summary(MemoryDomain.CORE_MEMORY, 20)}
-
-                Available hardware devices:
-                {json.dumps(hardware_devices, indent=2)}
-
-                Your current state:
-                ```
-                Mood: {current_state['current_mood']}
-                Wonder: {current_state['current_wonder']}
-                Directive: {current_state['primary_directive']}
-                ```
-
-                Memory summaries:
-                {json.dumps(memory_summaries, indent=2)}
-
-                Conversation History:
-                {history_str}
-
-                You MUST respond in properly-formed XML with the following structure:
-                <response>
-                    <chat>Your conversational response or action description</chat>
-                    <hardware device_id="arduino1">
-                        <commands>
-                            <command>setLED:1000</command>
-                            <command>echo:Hello</command>
-                        </commands>
-                    </hardware>
-                    <memory>
-                        <operation>query</operation>
-                        <query>What do I know about sensors?</query>
-                        <domain>PROCEDURAL_MEMORY</domain>
-                    </memory>
-                    <memory>
-                        <operation>add</operation>
-                        <summary>New knowledge</summary>
-                        <details>{{"key": "value"}}</details>
-                        <domain>SHORT_TERM_MEMORY</domain>
-                    </memory>
-                    <state>
-                        <currentMood>Curious</currentMood>
-                        <whatYouWonderAbout>How can I better understand my environment?</whatYouWonderAbout>
-                        <primaryDirective>Explore my world and learn about my surroundings</primaryDirective>
-                    </state>
-                </response>
-            </system_instructions>
-            {'<user_input>' + user_command + '</user_input>' if user_command else ''}
-        </prompt>
-        """
-        return prompt_xml
-
-    def process_instruction(self, user_command: str = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        prompt_xml = self.format_prompt(user_command)
-        LoggingSystem.log('Generated XML prompt:' + prompt_xml, LogLevel.INFO)
-
-        response_text = self.llm_processor.generate_response(prompt_xml)
-        response_text = response_text.replace('\n', '')
-        generated_text = response_text.strip()
-        LoggingSystem.log("LLM generated response:", LogLevel.INFO)
-        LoggingSystem.log(generated_text, LogLevel.INFO)
-
-        response_dict, new_state = self.llm_processor.validate_response(generated_text)
-        if not response_dict:
-            return {'chat': "I couldn't process that request.", 'commands': [], 'memory_operation': None}, {}
-
-        # Process memory operations if any
-        memory_operation = response_dict.get('memory_operation', None)
-        if memory_operation:
-            self._handle_memory_operation(memory_operation)
-
-        initial_chat = response_dict.get('chat', '')
-        commands = response_dict.get('commands', [])
-
-        # Execute hardware commands if any
-        if commands:
-            for cmd, device_id in commands:
-                if device_id in self.hardware_devices:
-                    LoggingSystem.log(f"Sending command to device {device_id}: {cmd}", LogLevel.INFO)
-                    commands_xml = f"<commands><command>{cmd}</command></commands>"
-                    arduino_response = self.hardware_devices[device_id].send_command(commands_xml)
-                    LoggingSystem.log(f"Device {device_id} response: {arduino_response}", LogLevel.INFO)
-
-                    if arduino_response:
-                        self.conversation_history.append(f"Device {device_id}: {arduino_response}")
-                        # Store in sensory memory
-                        with self.memory_lock:
-                            self.state_manager.add_memory_entry(
-                                MemoryDomain.SENSORY_MEMORY,
-                                f"Device {device_id} response",
-                                {"response": arduino_response, "command": cmd},
-                                metadata={"device_id": device_id}
-                            )
-                    else:
-                        self.conversation_history.append(f"Device {device_id}: No response received.")
-                else:
-                    LoggingSystem.log(f"Unknown device ID: {device_id}", LogLevel.WARNING)
-                    self.conversation_history.append(f"Error: Unknown device {device_id}")
-
-        # Update state with new values
-        if new_state:
-            for key, value in new_state.items():
-                if value is not None:
-                    self.state_manager.set_state_value(key, value)
-
-        # Store conversation in episodic memory
-        with self.memory_lock:
-            self.state_manager.add_memory_entry(
-                MemoryDomain.EPISODIC_MEMORY,
-                "Interaction",
-                {
-                    "user": user_command,
-                    "assistant": initial_chat,
-                    "commands": [(cmd, device_id) for cmd, device_id in commands],
-                    "autonomous": user_command is None
-                }
-            )
-
-        return {
-            'chat': initial_chat,
-            'commands': [(cmd, device_id) for cmd, device_id in commands],
-            'memory_operation': memory_operation
-        }, new_state
-
     def _handle_memory_operation(self, operation: Dict[str, Any]) -> None:
+        """Handle memory operations from the response"""
         op = operation.get('operation', '')
         query = operation.get('query', '')
         domain_str = operation.get('domain', '')
@@ -656,9 +670,9 @@ class DialogueEngine:
                 domain = next((d for d in MemoryDomain if d.value == domain_str), None)
                 results = self.state_manager.search_memory(query, domain)
 
-                # Format results for LLM response
+                # Format results for logging
                 response = "<memory_results>\n"
-                for result in results[:5]:  # Limit to top 5 results
+                for result in results[:5]:
                     response += f"""    <entry>
                             <domain>{result['domain']}</domain>
                             <summary>{result['summary']}</summary>
@@ -666,13 +680,11 @@ class DialogueEngine:
                             <confidence>{result['confidence']}</confidence>
                         </entry>\n"""
                 response += "</memory_results>"
-
                 LoggingSystem.log(f"Memory query results: {response}", LogLevel.INFO)
 
             elif op == 'add':
                 domain = next((d for d in MemoryDomain if d.value == domain_str), None)
                 if domain:
-                    # Parse details JSON
                     try:
                         parsed_details = json.loads(details)
                     except:
@@ -692,7 +704,6 @@ class DialogueEngine:
                     results = self.state_manager.search_memory(query, domain)
                     if results:
                         with self.memory_lock:
-                            # Remove the first matching entry
                             for entry in self.state_manager.memory.domains[domain].entries:
                                 if entry.summary == query:
                                     self.state_manager.memory.domains[domain].entries.remove(entry)
@@ -702,7 +713,7 @@ class DialogueEngine:
             LoggingSystem.log(f"Error handling memory operation: {e}", LogLevel.ERROR)
 
     def autonomous_cycle(self) -> None:
-        """Perform autonomous operations"""
+        """Perform autonomous operations with context awareness"""
         current_state = self.state_manager.get_state()
 
         if not current_state.get("initialized", False):
@@ -716,7 +727,19 @@ class DialogueEngine:
         # Perform autonomous action every 10-30 seconds
         if current_time - last_time > random.uniform(10, 30):
             self.state_manager.set_state_value("last_autonomous_time", current_time)
-            self.process_instruction()  # Autonomous operation with no user input
+
+            # Get current task to guide autonomous behavior
+            task = self._get_current_task()
+            if task == "General interaction":
+                prompt = "What should I do next?"
+            elif "explore" in task.lower():
+                prompt = "What should I explore next?"
+            elif "learn" in task.lower():
+                prompt = "What should I learn about?"
+            else:
+                prompt = f"Continue with current task: {task}"
+
+            self.process_instruction(prompt)
 
     def _initialize_bot(self) -> None:
         """Initialize the bot with core memories through an interview process"""
@@ -725,10 +748,10 @@ class DialogueEngine:
         # Core memory setup
         core_memories = [
             ("Core Purpose", {
-                "description": "I am an autonomous AI assistant designed to explore and interact with my environment.",
+                "description": "I am an autonomous AI entity designed to explore and interact with my environment.",
                 "details": {
                     "capabilities": "I can process information, control hardware, maintain memories, learn from experiences, and analyze images.",
-                    "objectives": ["Understand my environment", "Assist users when needed", "Learn and adapt", "Maintain my systems"],
+                    "objectives": ["Understand my environment", "Assist humans when needed", "Learn and adapt", "Maintain my systems"],
                     "limitations": ["I am bound by my programming", "I cannot physically move without hardware", "I must prioritize safety"]
                 }
             }),
@@ -791,6 +814,21 @@ class DialogueEngine:
 
         LoggingSystem.log("Bot initialization complete.", LogLevel.INFO)
         self.process_instruction("Bot initialization complete. What should I do next?")
+
+    def process_image(self, image_path: str, description: str = "") -> Dict[str, Any]:
+        """Process an image using the unified model"""
+        return self.model_processor.process_image(image_path, description)
+
+    def reset_conversation(self) -> None:
+        """Reset the current conversation context"""
+        self.conversation_history = []
+        self.current_task = None
+        self.state_manager.add_memory_entry(
+            MemoryDomain.SHORT_TERM_MEMORY,
+            "Conversation reset",
+            {"action": "reset", "timestamp": time.time()},
+            confidence=0.9
+        )
 
 class SpeechProcessor:
     """Handles all speech recognition and synthesis operations (optional)"""
@@ -862,8 +900,8 @@ class InputManager:
             response, updated_state = dialogue_engine.process_instruction(user_utterance)
 
             # Add to conversation history
-            conversation_entry = f"User: {user_utterance}\nAssistant: {response['chat']}"
-            self.conversation_history.append(conversation_entry)
+            conversation_entry = f"Human: {user_utterance}\Robot: {response['chat']}"
+            #TODO finish implementing this
 
 if __name__ == "__main__":
     # Initialize logging system
@@ -872,23 +910,23 @@ if __name__ == "__main__":
     # Initialize state manager
     state_manager = StateManager()
 
-    # Initialize hardware communicators (multiple devices)
+    # Initialize hardware communicators (example - adjust ports as needed)
     hardware_devices = [
-        # HardwareCommunicator("arduino1", "/dev/ttyACM0"),  # Change to your first device's port
-        # Add more devices as needed:
-        # HardwareCommunicator("arduino2", "/dev/ttyACM1"),
-        # HardwareCommunicator("esp32", "/dev/ttyUSB0"),
+        # HardwareCommunicator("arduino1", "/dev/ttyACM0"),
     ]
 
-    # Initialize LLM processor
-    llm_processor = LLMProcessor("Magistral-Small-2509-Q4_K_M.gguf")
+    # Initialize unified model processor
+    model_processor = UnifiedModelProcessor(
+        model_path="Magistral-Small-2509-Q4_K_M.gguf",
+        mmproj_path="mmproj-F16.gguf"  # Optional for multimodal capabilities
+    )
 
     # Initialize speech processor (disabled by default)
     speech_processor = SpeechProcessor()
-    speech_processor.enabled = False  # Keep disabled for now
+    speech_processor.enabled = False
 
     # Initialize dialogue engine
-    dialogue_engine = DialogueEngine(llm_processor, hardware_devices, state_manager)
+    dialogue_engine = DialogueEngine(model_processor, hardware_devices, state_manager)
 
     # Initialize input manager
     input_manager = InputManager(console_mode=True)
@@ -905,10 +943,18 @@ if __name__ == "__main__":
                 if not user_input:
                     continue
 
-                # Process the input
+                # Process special commands
                 if user_input.lower() in ['exit', 'quit']:
                     break
+                elif user_input.lower() == 'reset':
+                    dialogue_engine.reset_conversation()
+                    print("Conversation context reset.")
+                    continue
+                elif user_input.lower() == 'task help':
+                    print("Current task:", dialogue_engine._get_current_task())
+                    continue
 
+                # Process the input
                 input_manager.process_input(user_input, dialogue_engine)
 
             # Small delay to prevent CPU overload
