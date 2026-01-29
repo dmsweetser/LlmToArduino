@@ -1,7 +1,8 @@
 #include <BluetoothSerial.h>
 #include <Arduino.h>
+#include <ESP32Servo.h>
 
-// === Motor Pins (From your working script) ===
+// === Motor Pins ===
 const int M1_Forward = 128;
 const int M1_Backward = 64;
 const int M2_Forward = 32;
@@ -14,19 +15,14 @@ const int M4_Backward = 8;
 // === Bluetooth Serial ===
 BluetoothSerial SerialBT;
 
-// === UART for Camera (from ESP32-CAM) ===
-const int UART_RX_PIN = 14;
-const int UART_TX_PIN = 13;
-HardwareSerial Serial2(2);
+// === Servo Control ===
+Servo cameraServo;
+const int SERVO_PIN = 26;
 
-// === Image Handling ===
-const int MAX_IMAGE_SIZE = 60000;
-uint8_t imageBuffer[MAX_IMAGE_SIZE];
-int imageIndex = 0;
-bool imageStarted = false;
-bool imageReceived = false;
-uint32_t expectedImageSize = 0;
-unsigned long lastImageTime = 0;
+// === Line Tracking & Ultrasonic ===
+const int LINE_TRACKING_PIN = 34;
+const int ULTRASONIC_TRIG = 35;
+const int ULTRASONIC_ECHO = 36;
 
 // === LED & Blinking ===
 const int LED_BUILTIN = 2;
@@ -34,28 +30,17 @@ bool ledState = false;
 int ledPacing = 1000;
 unsigned long lastBlinkTime = 0;
 
-// === Servo Control ===
-#include <ESP32Servo.h>
-Servo cameraServo;
-const int SERVO_PIN = 26;
-
-// === Line Tracking & Ultrasonic ===
-const int LINE_TRACKING_PIN = 34; // Adjust based on your actual connection
-const int ULTRASONIC_TRIG = 35;  // Adjust based on your actual connection
-const int ULTRASONIC_ECHO = 36;  // Adjust based on your actual connection
-
 // === Script Engine ===
 String scriptBuffer = "";
 int scriptIndex = 0;
 bool scriptRunning = false;
-bool scriptLoaded = false;
 
-// === Labels (Map label name to line number) ===
+// === Labels ===
 struct Label {
   String name;
   int line;
 };
-Label labels[10]; // Max 10 labels
+Label labels[10];
 int labelCount = 0;
 
 // === Debug Print Helper ===
@@ -103,9 +88,6 @@ void processCommand(String cmd, String params) {
       "echo:message\n"
       "setLED:pacing\n"
       "servo:angle\n"
-      "camera:start\n"
-      "camera:stop\n"
-      "snapshot:\n"
       "delay:ms\n"
       "run:script\n"
       "label:name\n"
@@ -116,7 +98,6 @@ void processCommand(String cmd, String params) {
   } else if (cmd == "getStatus") {
     String caps =
       "led_pacing:" + String(ledPacing) + ", "
-      "is_camera_active:" + String(isCapturing) + ", "
       "servo_angle:" + String(cameraServo.read()) + ", "
       "line_tracking:" + String(digitalRead(LINE_TRACKING_PIN)) + ", "
       "ultrasonic:" + String(getUltrasonicDistance());
@@ -139,22 +120,6 @@ void processCommand(String cmd, String params) {
     } else {
       sendResponse("ERROR", "Angle must be 0-180");
     }
-  } else if (cmd == "camera") {
-    if (params == "start") {
-      Serial2.write('C');
-      debugPrint("Sent 'C' to camera (Serial2)\n");
-      sendResponse("OK", "Camera capture started");
-    } else if (params == "stop") {
-      Serial2.write('S');
-      debugPrint("Sent 'S' to camera (Serial2)\n");
-      sendResponse("OK", "Camera capture stopped");
-    } else {
-      sendResponse("ERROR", "Invalid camera parameter");
-    }
-  } else if (cmd == "snapshot") {
-    Serial2.write('C');
-    debugPrint("Snapshot requested (sent 'C')\n");
-    sendResponse("OK", "Snapshot requested");
   } else if (cmd == "delay") {
     int ms = params.toInt();
     if (ms > 0) {
@@ -195,66 +160,6 @@ void processCommand(String cmd, String params) {
   }
 }
 
-// === Handle UART Image from Camera ESP32 ===
-void handleUartImage() {
-  while (Serial2.available() > 0) {
-    char c = Serial2.read();
-
-    if (c == 'S' && !imageStarted) {
-      imageStarted = true;
-      imageIndex = 0;
-      expectedImageSize = 0;
-      debugPrint("Image start detected\n");
-    } else if (imageStarted && imageIndex == 0) {
-      expectedImageSize = (uint32_t(c) << 24);
-      imageIndex++;
-    } else if (imageStarted && imageIndex == 1) {
-      expectedImageSize |= (uint32_t(c) << 16);
-      imageIndex++;
-    } else if (imageStarted && imageIndex == 2) {
-      expectedImageSize |= (uint32_t(c) << 8);
-      imageIndex++;
-    } else if (imageStarted && imageIndex == 3) {
-      expectedImageSize |= (uint32_t(c));
-      debugPrint("Expected image size: ");
-      debugPrint(String(expectedImageSize).c_str());
-      debugPrint(" bytes\n");
-    } else if (imageStarted && imageIndex > 3) {
-      if (imageIndex - 4 < MAX_IMAGE_SIZE) {
-        imageBuffer[imageIndex - 4] = c;
-      } else {
-        debugPrint("Image buffer overflow!\n");
-        imageStarted = false;
-        imageIndex = 0;
-        continue;
-      }
-
-      if (imageIndex - 4 >= expectedImageSize) {
-        if (c == 'E') {
-          imageReceived = true;
-          debugPrint("Full image received and stored\n");
-          lastImageTime = millis();
-        } else {
-          debugPrint("Unexpected end marker\n");
-        }
-        imageStarted = false;
-        imageIndex = 0;
-      }
-    }
-  }
-
-  if (imageReceived && SerialBT.availableForWrite() > 0) {
-    debugPrint("Sending image over Bluetooth...\n");
-    for (int i = 0; i < expectedImageSize; i++) {
-      SerialBT.write(imageBuffer[i]);
-    }
-    SerialBT.write('E');
-    SerialBT.flush();
-    debugPrint("Image sent over Bluetooth\n");
-    imageReceived = false;
-  }
-}
-
 // === Blink LED ===
 void blinkLED() {
   unsigned long now = millis();
@@ -274,7 +179,7 @@ float getUltrasonicDistance() {
   digitalWrite(ULTRASONIC_TRIG, LOW);
 
   unsigned long duration = pulseIn(ULTRASONIC_ECHO, HIGH);
-  float distance = duration * 0.034 / 2; // Convert to cm
+  float distance = duration * 0.034 / 2;
   return distance;
 }
 
@@ -365,7 +270,7 @@ void setup() {
 
   // Servo
   cameraServo.attach(SERVO_PIN);
-  cameraServo.write(90); // Default position
+  cameraServo.write(90);
 
   // Line Tracking
   pinMode(LINE_TRACKING_PIN, INPUT);
@@ -374,26 +279,19 @@ void setup() {
   pinMode(ULTRASONIC_TRIG, OUTPUT);
   pinMode(ULTRASONIC_ECHO, INPUT);
 
-  // UART2 (Camera)
-  Serial2.begin(115200, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
-  debugPrint("UART2 (Serial2) initialized for camera\n");
-
   // Bluetooth
-  SerialBT.begin("ESP32-Robot");
+  SerialBT.begin("ESP32-Car");
   debugPrint("Bluetooth Serial started\n");
 
   // Debug
   Serial.begin(115200);
   delay(1000);
-  debugPrint("ESP32-Robot: Full System Ready.\n");
+  debugPrint("ESP32-Car: Ready.\n");
   debugPrint("Send: getCapabilities to see all commands.\n");
 }
 
 // === Main Loop ===
 void loop() {
-  // Handle UART image from camera
-  handleUartImage();
-
   // Handle Bluetooth input
   if (SerialBT.available()) {
     char c = SerialBT.read();

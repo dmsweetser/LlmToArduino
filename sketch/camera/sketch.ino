@@ -1,6 +1,6 @@
 #include "Arduino.h"
 #include "esp_camera.h"
-#include "WiFi.h"
+#include <BluetoothSerial.h>
 
 // === Camera Pin Mapping (ESP32-CAM) ===
 #define PWDN    -1
@@ -14,13 +14,12 @@
 #define SIO_D5  16
 #define SIO_D6  2
 #define SIO_D7  0
-
 #define VSYNC   12
 #define HREF    26
 #define PCLK    27
 
-// === UART for Communication (to main ESP32) ===
-HardwareSerial Serial2(2); // RX: GPIO14, TX: GPIO13
+// === Bluetooth Serial ===
+BluetoothSerial SerialBT;
 
 // === Camera Configuration ===
 camera_config_t config = {
@@ -49,89 +48,159 @@ camera_config_t config = {
 
 // === State Flags ===
 bool isCapturing = false;
+bool isStreaming = false;
 unsigned long captureStartTime = 0;
-const int CAPTURE_TIMEOUT = 5000; // 5 seconds
+const int CAPTURE_TIMEOUT = 5000;
+const int STREAM_TIMEOUT = 30000;
 
-// === Setup Function ===
+// === Debug Print Helper ===
+void debugPrint(const char* message) {
+  Serial.print(message);
+  Serial.flush();
+}
+
+// === Send Response Over Bluetooth ===
+void sendResponse(String status, String message) {
+  String response = status + ":" + message + "\n";
+  SerialBT.print(response);
+  SerialBT.flush();
+}
+
+// === Process Command ===
+void processCommand(String cmd, String params) {
+  if (cmd == "getCapabilities") {
+    String caps =
+      "snapshot:\n"
+      "stream:start\n"
+      "stream:stop\n"
+      "getStatus:\n";
+    SerialBT.print(caps);
+  } else if (cmd == "getStatus") {
+    String caps =
+      "is_streaming:" + String(isStreaming);
+    sendResponse("OK", caps);
+  } else if (cmd == "snapshot") {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (fb) {
+      // Send image size (4 bytes, big-endian)
+      uint32_t size = fb->len;
+      SerialBT.write((size >> 24) & 0xFF);
+      SerialBT.write((size >> 16) & 0xFF);
+      SerialBT.write((size >> 8) & 0xFF);
+      SerialBT.write(size & 0xFF);
+
+      // Send image data
+      SerialBT.write(fb->buf, fb->len);
+
+      // Send end marker
+      SerialBT.write('E');
+
+      // Release buffer
+      esp_camera_fb_return(fb);
+
+      debugPrint("Snapshot sent\n");
+    } else {
+      debugPrint("Failed to get camera frame\n");
+    }
+  } else if (cmd == "stream") {
+    if (params == "start") {
+      isStreaming = true;
+      captureStartTime = millis();
+      debugPrint("Streaming started\n");
+      sendResponse("OK", "Streaming started");
+    } else if (params == "stop") {
+      isStreaming = false;
+      debugPrint("Streaming stopped\n");
+      sendResponse("OK", "Streaming stopped");
+    } else {
+      sendResponse("ERROR", "Invalid stream parameter");
+    }
+  } else {
+    sendResponse("ERROR", "Unknown command: " + cmd);
+  }
+}
+
+// === Capture and Stream Images ===
+void captureAndStream() {
+  if (isStreaming) {
+    if (millis() - captureStartTime > STREAM_TIMEOUT) {
+      debugPrint("Streaming timeout reached\n");
+      isStreaming = false;
+      return;
+    }
+
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (fb) {
+      // Send image size (4 bytes, big-endian)
+      uint32_t size = fb->len;
+      SerialBT.write((size >> 24) & 0xFF);
+      SerialBT.write((size >> 16) & 0xFF);
+      SerialBT.write((size >> 8) & 0xFF);
+      SerialBT.write(size & 0xFF);
+
+      // Send image data
+      SerialBT.write(fb->buf, fb->len);
+
+      // Send end marker
+      SerialBT.write('E');
+
+      // Release buffer
+      esp_camera_fb_return(fb);
+
+      debugPrint("Stream frame sent\n");
+      captureStartTime = millis(); // Reset timeout
+    } else {
+      debugPrint("Failed to get camera frame\n");
+      delay(100);
+    }
+  }
+}
+
+// === Main Setup ===
 void setup() {
-  // Start serial for debugging
+  // Initialize serial for debugging
   Serial.begin(115200);
   delay(1000);
-  Serial.println("Camera ESP32: Starting...");
+  debugPrint("Camera ESP32: Starting...\n");
 
   // Initialize camera
   if (esp_camera_init(&config) != ESP_OK) {
-    Serial.println("Camera init failed!");
+    debugPrint("Camera init failed!\n");
     while (1) delay(1000);
   }
 
-  // Set resolution (optional)
+  // Set resolution
   sensor_t *s = esp_camera_sensor_get();
-  s->set_framesize(s, FRAMESIZE_QVGA); // 320x240
+  s->set_framesize(s, FRAMESIZE_QVGA);
 
-  // Start UART2 for communication with main ESP32
-  Serial2.begin(115200, SERIAL_8N1, 14, 13); // RX:14, TX:13
-  Serial.println("Camera ready. Waiting for commands...");
-
-  // Turn off LED (optional)
-  pinMode(13, OUTPUT);
-  digitalWrite(13, HIGH);
+  // Initialize Bluetooth
+  SerialBT.begin("ESP32-Camera");
+  debugPrint("Bluetooth Serial started\n");
+  debugPrint("Camera ready. Waiting for commands...\n");
 }
 
 // === Main Loop ===
 void loop() {
-  // Read command from main ESP32 (via Serial2)
-  if (Serial2.available() > 0) {
-    char cmd = Serial2.read();
-
-    if (cmd == 'C') {
-      // Start image capture
-      isCapturing = true;
-      captureStartTime = millis();
-      Serial.println("Capture requested...");
-      digitalWrite(13, LOW); // Turn on LED to indicate capture
-    } else if (cmd == 'S') {
-      // Stop capture
-      isCapturing = false;
-      digitalWrite(13, HIGH); // Turn off LED
-      Serial.println("Capture stopped");
-    }
-  }
-
-  // Capture image if requested
-  if (isCapturing) {
-    if (millis() - captureStartTime > CAPTURE_TIMEOUT) {
-      Serial.println("Capture timeout reached");
-      isCapturing = false;
-      digitalWrite(13, HIGH);
-    } else {
-      camera_fb_t *fb = esp_camera_fb_get();
-      if (fb) {
-        // Send image size (4 bytes, big-endian)
-        uint32_t size = fb->len;
-        Serial2.write((size >> 24) & 0xFF);
-        Serial2.write((size >> 16) & 0xFF);
-        Serial2.write((size >> 8) & 0xFF);
-        Serial2.write(size & 0xFF);
-
-        // Send image data
-        Serial2.write(fb->buf, fb->len);
-
-        // Send end marker
-        Serial2.write('E');
-
-        // Release buffer
-        esp_camera_fb_return(fb);
-
-        Serial.println("Image sent!");
-        isCapturing = false;
-        digitalWrite(13, HIGH); // Turn off LED
+  // Handle Bluetooth input
+  if (SerialBT.available()) {
+    char c = SerialBT.read();
+    if (c == '\n') {
+      int colon = commandBuffer.indexOf(':');
+      if (colon != -1) {
+        String cmd = commandBuffer.substring(0, colon);
+        String params = commandBuffer.substring(colon + 1);
+        processCommand(cmd, params);
       } else {
-        Serial.println("Failed to get camera frame");
-        delay(100); // Wait before retrying
+        sendResponse("ERROR", "Invalid format: missing ':'");
       }
+      commandBuffer = "";
+    } else {
+      commandBuffer += c;
     }
   }
 
-  delay(10); // Small delay
+  // Capture and stream if needed
+  captureAndStream();
+
+  delay(10);
 }
