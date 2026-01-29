@@ -1,5 +1,7 @@
 # LlmToArduino
 
+### Built in collaboration with Devstral-Small-2-24B-Instruct-2512-IQ4_NL.gguf
+
 ---
 NEW NOTES
 

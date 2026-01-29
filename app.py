@@ -893,16 +893,51 @@ class InputManager:
         self.enabled = True  # Input is always enabled
 
     def process_input(self, user_utterance: str, dialogue_engine: DialogueEngine) -> None:
-        if user_utterance.strip():
-            LoggingSystem.log("Processing user input...", LogLevel.INFO)
+        if not user_utterance.strip():
+            return
 
-            # Process the instruction through the dialogue engine
-            response, updated_state = dialogue_engine.process_instruction(user_utterance)
+        LoggingSystem.log("Processing user input...", LogLevel.INFO)
 
-            # Add to conversation history
-            conversation_entry = f"Human: {user_utterance}\Robot: {response['chat']}"
-            #TODO finish implementing this
+        # Process the instruction through the dialogue engine
+        response, updated_state = dialogue_engine.process_instruction(user_utterance)
 
+        # Add to conversation history
+        conversation_entry = f"Human: {user_utterance}\nRobot: {response['chat']}"
+        dialogue_engine.conversation_history.append(conversation_entry)
+
+        # Display response in console
+        print("\nRobot:", response['chat'])
+
+        # If we have an updated state, display the current task
+        if updated_state and 'currentTask' in updated_state and updated_state['currentTask']:
+            print(f"\nCurrent task: {updated_state['currentTask']}")
+
+        # If we have hardware commands, show what was executed
+        if response['commands']:
+            print("\nExecuted hardware commands:")
+            for cmd, device_id in response['commands']:
+                print(f"  Device {device_id}: {cmd}")
+
+    def start_speech_recognition(self, speech_processor: SpeechProcessor) -> None:
+        """Start continuous speech recognition (if enabled)"""
+        if not speech_processor.enabled:
+            return
+
+        # This would typically run in a separate thread
+        # For simplicity, we'll just record once and process
+        audio_file = speech_processor.record_audio()
+        if audio_file:
+            transcription = speech_processor.transcribe_audio(audio_file)
+            if transcription:
+                return transcription
+        return None
+
+    def start_speech_synthesis(self, text: str, speech_processor: SpeechProcessor) -> None:
+        """Start speech synthesis (if enabled)"""
+        if not speech_processor.enabled:
+            return
+        speech_processor.speak(text)
+        
 if __name__ == "__main__":
     # Initialize logging system
     LoggingSystem.setup_logging()

@@ -14,3 +14,4 @@ post.ps1
 state.json
 instructions.txt
 bin/arduino-cli
+memory.json
