@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+# Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="$SCRIPT_DIR/config"
 SKETCH_DIR="$SCRIPT_DIR/sketch"
@@ -10,7 +11,10 @@ LLM_MODEL="Magistral-Small-2509-Q4_K_M.gguf"
 LLM_URL="https://huggingface.co/unsloth/Magistral-Small-2509-GGUF/resolve/main/Magistral-Small-2509-Q4_K_M.gguf?download=true"
 MMPROJ_MODEL="mmproj-F16.gguf"
 MMPROJ_URL="https://huggingface.co/unsloth/Magistral-Small-2509-GGUF/resolve/main/mmproj-F16.gguf?download=true"
+CONFIG_FILE="$CONFIG_DIR/hardware_config.json"
+USERNAME=$(whoami)
 
+# Error handling
 error_exit() {
     echo "Error: $1" >&2
     exit 1
@@ -20,114 +24,216 @@ info() {
     echo "INFO: $1"
 }
 
-info "Checking for Python..."
-if ! command -v python3 &> /dev/null; then
-    error_exit "Python3 is not installed. Please install Python3 before running this script."
-fi
+# Create directories if they don't exist
+mkdir -p "$CONFIG_DIR"
 
-if [ ! -d "venv" ]; then
-    info "Creating virtual environment..."
-    python3 -m venv venv
-    if [ $? -ne 0 ]; then
-        error_exit "Failed to create virtual environment."
+# Function to download with resume capability
+download_with_resume() {
+    local url="$1"
+    local output_file="$2"
+    local temp_file="${output_file}.part"
+
+    if [ -f "$output_file" ]; then
+        info "File $output_file already exists, skipping download."
+        return 0
     fi
-    info "Virtual environment created successfully."
-else
-    info "Virtual environment already exists."
-fi
 
-info "Activating virtual environment..."
-source venv/bin/activate
-if [ $? -ne 0 ]; then
-    error_exit "Failed to activate virtual environment."
-fi
-info "Virtual environment activated successfully."
+    info "Downloading $url to $output_file..."
+    local total_size=0
+    local downloaded=0
 
-info "Installing required Python packages..."
-if [ ! -f "$REQUIREMENTS_FILE" ]; then
-    error_exit "requirements.txt not found in the current directory."
-fi
+    # Use curl with resume capability
+    while true; do
+        if [ -f "$temp_file" ]; then
+            local resume_size=$(stat -c%s "$temp_file")
+            info "Resuming download from byte $resume_size..."
+            curl -fsSL -C - "$url" -o "$temp_file" || {
+                rm -f "$temp_file"
+                error_exit "Failed to resume download of $output_file."
+            }
+        else
+            curl -fsSL "$url" -o "$temp_file" || {
+                rm -f "$temp_file"
+                error_exit "Failed to download $output_file."
+            }
+        fi
 
-pip install -r "$REQUIREMENTS_FILE"
-if [ $? -ne 0 ]; then
-    error_exit "Failed to install required Python packages."
-fi
-info "Python packages installed successfully."
+        # Check if download was complete
+        local current_size=$(stat -c%s "$temp_file")
+        if [ "$current_size" -gt 0 ] && [ "$current_size" -ne "$total_size" ]; then
+            mv "$temp_file" "$output_file"
+            info "Download completed successfully."
+            return 0
+        fi
 
-info "Installing Arduino CLI..."
+        # If download wasn't complete, ask user if they want to retry
+        read -p "Download incomplete. Retry? (y/n): " choice
+        case "$(echo $choice | tr '[:upper:]' '[:lower:]')" in
+            y|yes) continue ;;
+            *) rm -f "$temp_file"; error_exit "Download cancelled." ;;
+        esac
+    done
+}
 
-if ! command -v arduino-cli &> /dev/null; then
-    curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
-else
-    info "Arduino CLI already installed."
-fi
+# Function to list available serial devices
+list_serial_devices() {
+    info "Available serial devices:"
+    ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print NR " - " $9 " (" $10 ")"}'
+}
 
-info "Installing Arduino AVR core..."
-if ! arduino-cli core install arduino:avr; then
-    error_exit "Failed to install arduino:avr core."
-fi
+# Function to list available Bluetooth devices
+list_bluetooth_devices() {
+    info "Available Bluetooth devices:"
+    bluetoothctl devices | grep -v "Device" | awk '{print NR " - " $3 " " $2}'
+}
 
-info "Installing LedControl library..."
-if ! arduino-cli lib install LedControl; then
-    error_exit "Failed to install LedControl library."
-fi
+# Function to configure hardware ports
+configure_hardware() {
+    local config_content=$(cat <<EOF
+{
+    "hardware_devices": {
+        "camera_board": {
+            "port": "$1",
+            "type": "camera",
+            "description": "Camera module"
+        },
+        "main_board": {
+            "port": "$2",
+            "type": "main",
+            "description": "Main control board"
+        }
+    },
+    "bluetooth_devices": {
+        "device1": {
+            "address": "$3",
+            "channel": 1,
+            "description": "Bluetooth device 1"
+        },
+        "device2": {
+            "address": "$4",
+            "channel": 1,
+            "description": "Bluetooth device 2"
+        }
+    }
+}
+EOF
+)
 
-info "Installing BluetoothSerial library..."
-if ! arduino-cli lib install BluetoothSerial; then
-    error_exit "Failed to install BluetoothSerial library."
-fi
+    echo "$config_content" > "$CONFIG_FILE"
+    info "Hardware configuration saved to $CONFIG_FILE"
+}
 
-info "Installing ESP32Servo library..."
-if ! arduino-cli lib install ESP32Servo; then
-    error_exit "Failed to install ESP32Servo library."
-fi
-
-info "Arduino CLI setup complete."
-
-if [ ! -f "$LLM_MODEL" ]; then
-    info "Downloading LLM model..."
-    if ! curl -fsSL "$LLM_URL" -o "$LLM_MODEL"; then
-        error_exit "Failed to download LLM model."
+# Main installation function
+main() {
+    # Check if running as root
+    if [ "$EUID" -eq 0 ]; then
+        error_exit "Please do not run this script as root."
     fi
-    info "LLM model downloaded successfully."
-else
-    info "LLM model already exists."
-fi
 
-if [ ! -f "$MMPROJ_MODEL" ]; then
-    info "Downloading MMPROJ model..."
-    if ! curl -fsSL "$MMPROJ_URL" -o "$MMPROJ_MODEL"; then
-        error_exit "Failed to download MMPROJ model."
+    # Update system
+    info "Updating system packages..."
+    sudo apt update -y
+    sudo apt upgrade -y
+
+    # Install dependencies
+    info "Installing required system dependencies..."
+    sudo apt install -y \
+        portaudio19-dev \
+        python3-dev \
+        python3-pip \
+        curl \
+        espeak-ng \
+        arduino-cli \
+        bluetooth \
+        bluez \
+        bluez-tools \
+        rfcomm
+
+    # Add user to dialout group
+    info "Adding user to dialout group..."
+    sudo usermod -aG dialout "$USERNAME"
+    info "You may need to log out and back in for group changes to take effect."
+
+    # Set up Arduino CLI
+    info "Configuring Arduino CLI..."
+    mkdir -p ~/.arduino15
+    arduino-cli config init
+    arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+    arduino-cli core install arduino:avr
+    arduino-cli core install esp32:esp32
+    arduino-cli lib install LedControl
+    arduino-cli lib install BluetoothSerial
+    arduino-cli lib install ESP32Servo
+
+    # Create virtual environment and install Python dependencies
+    if [ ! -d "venv" ]; then
+        info "Creating virtual environment..."
+        python3 -m venv venv
     fi
-    info "MMPROJ model downloaded successfully."
-else
-    info "MMPROJ model already exists."
-fi
 
-read -p "Please connect the camera board and press enter..." wait
+    info "Activating virtual environment and installing Python packages..."
+    source venv/bin/activate
+    pip install --upgrade pip
+    pip install -r "$REQUIREMENTS_FILE"
 
-info "Compiling camera sketch..."
-if ! arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"; then
-    error_exit "Failed to compile camera sketch."
-fi
+    # Download LLM models with resume capability
+    info "Downloading LLM models..."
+    download_with_resume "$LLM_URL" "$LLM_MODEL"
+    download_with_resume "$MMPROJ_URL" "$MMPROJ_MODEL"
 
-info "Uploading camera sketch..."
-if ! arduino-cli upload -p "/dev/ttyUSB0" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"; then
-    error_exit "Failed to upload camera sketch."
-fi
+    # Hardware configuration
+    info "Hardware Configuration Setup"
 
-read -p "Please connect the main board, disconnect the camera board from the main board, and press enter..." wait
+    # List available serial devices
+    list_serial_devices
 
-info "Compiling main sketch..."
-if ! arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"; then
-    error_exit "Failed to compile main sketch."
-fi
+    # Prompt for camera board
+    read -p "Enter the number of the camera board device: " camera_num
+    camera_port=$(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | sed -n "${camera_num}p" | awk '{print $9}')
 
-info "Uploading main sketch..."
-if ! arduino-cli upload -p "/dev/ttyUSB0" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"; then
-    error_exit "Failed to upload main sketch."
-fi
+    # Prompt for main board
+    read -p "Enter the number of the main board device: " main_num
+    main_port=$(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | sed -n "${main_num}p" | awk '{print $9}')
 
-info "Sketches uploaded successfully."
+    # Upload camera sketch
+    info "Uploading camera sketch to $camera_port..."
+    arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
+    arduino-cli upload -p "$camera_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
 
-info "Installation and upload completed successfully."
+    # Disconnect camera board
+    info "Please disconnect the camera board from the main board and press enter..."
+    read -p "" dummy
+
+    # Upload main sketch
+    info "Uploading main sketch to $main_port..."
+    arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
+    arduino-cli upload -p "$main_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
+
+    # Bluetooth configuration
+    info "Bluetooth Configuration Setup"
+
+    # List available Bluetooth devices
+    list_bluetooth_devices
+
+    # Prompt for first Bluetooth device
+    read -p "Enter the number of the first Bluetooth device: " bt1_num
+    bt1_addr=$(bluetoothctl devices | grep -v "Device" | sed -n "${bt1_num}p" | awk '{print $2}')
+
+    # Prompt for second Bluetooth device
+    read -p "Enter the number of the second Bluetooth device: " bt2_num
+    bt2_addr=$(bluetoothctl devices | grep -v "Device" | sed -n "${bt2_num}p" | awk '{print $2}')
+
+    # Configure hardware
+    configure_hardware "$camera_port" "$main_port" "$bt1_addr" "$bt2_addr"
+
+    # Connect to Bluetooth devices
+    info "Connecting to Bluetooth devices..."
+    sudo rfcomm bind /dev/rfcomm0 "$bt1_addr" 1
+    sudo rfcomm bind /dev/rfcomm1 "$bt2_addr" 1
+
+    info "Installation and configuration completed successfully."
+    info "Configuration saved to $CONFIG_FILE"
+}
+
+# Run main function
+main

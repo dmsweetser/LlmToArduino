@@ -268,14 +268,68 @@ class StateManager:
             confidence=1.0
         )
 
+class HardwareManager:
+    """Manages hardware configuration and devices"""
+
+    def __init__(self, config_path="config/hardware_config.json"):
+        self.config_path = config_path
+        self.config = {}
+        self.devices = {}
+        self.bluetooth_devices = {}
+        self.load_config()
+
+    def load_config(self):
+        """Load hardware configuration from file"""
+        try:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, 'r') as f:
+                    self.config = json.load(f)
+                self._initialize_devices()
+            else:
+                raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
+        except Exception as e:
+            LoggingSystem.log(f"Error loading hardware config: {e}", LogLevel.ERROR)
+            raise
+
+    def _initialize_devices(self):
+        """Initialize hardware devices from configuration"""
+        if 'hardware_devices' in self.config:
+            for name, device in self.config['hardware_devices'].items():
+                device_id = f"arduino_{name}"
+                self.devices[device_id] = HardwareCommunicator(
+                    device_id=device_id,
+                    port=device['port'],
+                    device_type=device.get('type', 'generic')
+                )
+
+        if 'bluetooth_devices' in self.config:
+            self.bluetooth_devices = self.config['bluetooth_devices']
+
+    def get_device(self, device_id):
+        """Get a specific hardware device"""
+        return self.devices.get(device_id)
+
+    def get_all_devices(self):
+        """Get all hardware devices"""
+        return list(self.devices.values())
+
+    def get_bluetooth_device(self, device_name):
+        """Get Bluetooth device configuration"""
+        return self.bluetooth_devices.get(device_name)
+
+    def get_all_bluetooth_devices(self):
+        """Get all Bluetooth device configurations"""
+        return self.bluetooth_devices
+
 class HardwareCommunicator:
     """Handles direct hardware communication with functional approach"""
 
-    def __init__(self, device_id: str, port: str) -> None:
+    def __init__(self, device_id: str, port: str, device_type: str = "generic") -> None:
         self.device_id = device_id
+        self.device_type = device_type
         try:
             self.serial_connection = serial.Serial(port, 9600, timeout=30)
-            LoggingSystem.log(f"Serial port {port} opened successfully for device {device_id}.", LogLevel.INFO)
+            LoggingSystem.log(f"Serial port {port} opened successfully for device {device_id} ({device_type}).", LogLevel.INFO)
             self.capabilities = ""
         except Exception as e:
             LoggingSystem.log(f"Error opening serial port {port} for device {device_id}: {e}", LogLevel.ERROR)
@@ -421,9 +475,10 @@ class UnifiedModelProcessor:
 class DialogueEngine:
     """Manages conversation flow with improved memory handling"""
 
-    def __init__(self, model_processor: UnifiedModelProcessor, hardware_devices: List[HardwareCommunicator], state_manager: StateManager) -> None:
+    def __init__(self, model_processor: UnifiedModelProcessor, hardware_manager: HardwareManager, state_manager: StateManager) -> None:
         self.model_processor = model_processor
-        self.hardware_devices = {dev.device_id: dev for dev in hardware_devices}
+        self.hardware_manager = hardware_manager
+        self.hardware_devices = hardware_manager.get_all_devices()
         self.state_manager = state_manager
         self.conversation_history = []
         self.autonomous_mode = True
@@ -937,7 +992,7 @@ class InputManager:
         if not speech_processor.enabled:
             return
         speech_processor.speak(text)
-        
+
 if __name__ == "__main__":
     # Initialize logging system
     LoggingSystem.setup_logging()
@@ -945,10 +1000,12 @@ if __name__ == "__main__":
     # Initialize state manager
     state_manager = StateManager()
 
-    # Initialize hardware communicators (example - adjust ports as needed)
-    hardware_devices = [
-        # HardwareCommunicator("arduino1", "/dev/ttyACM0"),
-    ]
+    # Initialize hardware manager
+    try:
+        hardware_manager = HardwareManager()
+    except Exception as e:
+        LoggingSystem.log(f"Error initializing hardware manager: {e}", LogLevel.ERROR)
+        raise
 
     # Initialize unified model processor
     model_processor = UnifiedModelProcessor(
@@ -960,8 +1017,8 @@ if __name__ == "__main__":
     speech_processor = SpeechProcessor()
     speech_processor.enabled = False
 
-    # Initialize dialogue engine
-    dialogue_engine = DialogueEngine(model_processor, hardware_devices, state_manager)
+    # Initialize dialogue engine with hardware manager
+    dialogue_engine = DialogueEngine(model_processor, hardware_manager, state_manager)
 
     # Initialize input manager
     input_manager = InputManager(console_mode=True)
@@ -984,6 +1041,16 @@ if __name__ == "__main__":
                 elif user_input.lower() == 'reset':
                     dialogue_engine.reset_conversation()
                     print("Conversation context reset.")
+                    continue
+                elif user_input.lower() == 'hardware':
+                    print("\nAvailable hardware devices:")
+                    for device in hardware_manager.get_all_devices():
+                        print(f"  {device.device_id} ({device.device_type}): {device.serial_connection.port}")
+                    continue
+                elif user_input.lower() == 'bluetooth':
+                    print("\nConfigured Bluetooth devices:")
+                    for name, config in hardware_manager.get_all_bluetooth_devices().items():
+                        print(f"  {name}: {config['address']} (channel {config['channel']})")
                     continue
                 elif user_input.lower() == 'task help':
                     print("Current task:", dialogue_engine._get_current_task())
