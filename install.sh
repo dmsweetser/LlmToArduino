@@ -191,23 +191,30 @@ main() {
     read -p "Enter the number of the camera board device: " camera_num
     camera_port=$(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | sed -n "${camera_num}p" | awk '{print $9}')
 
-    # Prompt for main board
-    read -p "Enter the number of the main board device: " main_num
-    main_port=$(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | sed -n "${main_num}p" | awk '{print $9}')
-
     # Upload camera sketch
     info "Uploading camera sketch to $camera_port..."
     arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
     arduino-cli upload -p "$camera_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
 
     # Disconnect camera board
-    info "Please disconnect the camera board from the main board and press enter..."
+    info "Please disconnect the camera board, connect the main board and press enter..."
     read -p "" dummy
+
+    # List available serial devices
+    list_serial_devices
+
+    # Prompt for main board
+    read -p "Enter the number of the main board device: " main_num
+    main_port=$(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | sed -n "${main_num}p" | awk '{print $9}')
 
     # Upload main sketch
     info "Uploading main sketch to $main_port..."
     arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
     arduino-cli upload -p "$main_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
+
+    # Power on the equipment
+    info "Please power on the hardware now..."
+    read -p "" dummy
 
     # Bluetooth configuration
     info "Bluetooth Configuration Setup"
