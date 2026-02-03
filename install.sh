@@ -143,11 +143,13 @@ main() {
         python3-pip \
         curl \
         espeak-ng \
-        arduino-cli \
+        arduino \
         bluetooth \
         bluez \
         bluez-tools \
-        rfcomm
+        libbluetooth-dev \
+        rfkill \
+        pulseaudio-module-bluetooth
 
     # Add user to dialout group
     info "Adding user to dialout group..."
