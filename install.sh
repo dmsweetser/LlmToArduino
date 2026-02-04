@@ -137,7 +137,8 @@ main() {
         bluez-tools \
         libbluetooth-dev \
         rfkill \
-        pulseaudio-module-bluetooth
+        pulseaudio-module-bluetooth \
+        python3.11-venv
 
     mkdir -p ~/local/bin
     echo 'export PATH="$HOME/local/bin:$PATH"' >> ~/.bashrc
