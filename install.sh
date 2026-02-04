@@ -151,7 +151,7 @@ main() {
         rfkill \
         pulseaudio-module-bluetooth
 
-    curl -fsSL https://raw.githubusercontent.com | BINDIR=~/.local/bin sh
+    curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
 
     # Add user to dialout group
     info "Adding user to dialout group..."
