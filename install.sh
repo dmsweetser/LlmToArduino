@@ -151,7 +151,7 @@ main() {
     # Set up Arduino CLI
     info "Configuring Arduino CLI..."
     mkdir -p ~/.arduino15
-    ~/local/bin/arduino-cli config init
+    ~/local/bin/arduino-cli config init --overwrite
     ~/local/bin/arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     ~/local/bin/arduino-cli core install arduino:avr
     ~/local/bin/arduino-cli core install esp32:esp32
