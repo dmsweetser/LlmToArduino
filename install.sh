@@ -153,7 +153,9 @@ main() {
 
     sudo apt update
     sudo apt install snapd
-
+    sudo snap install core
+    sudo snap install snapd
+    sudo snap refresh core
     sudo snap install arduino-cli
 
     # Add user to dialout group
