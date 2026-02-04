@@ -91,28 +91,16 @@ list_bluetooth_devices() {
 configure_hardware() {
     local config_content=$(cat <<EOF
 {
-    "hardware_devices": {
+    "bluetooth_devices": {
         "camera_board": {
-            "port": "$1",
-            "type": "camera",
+            "address": "$1",
+            "channel": 1,
             "description": "Camera module"
         },
         "main_board": {
-            "port": "$2",
-            "type": "main",
+            "address": "$2",
+            "channel": 1,
             "description": "Main control board"
-        }
-    },
-    "bluetooth_devices": {
-        "device1": {
-            "address": "$3",
-            "channel": 1,
-            "description": "Bluetooth device 1"
-        },
-        "device2": {
-            "address": "$4",
-            "channel": 1,
-            "description": "Bluetooth device 2"
         }
     }
 }
@@ -163,13 +151,13 @@ main() {
     # Set up Arduino CLI
     info "Configuring Arduino CLI..."
     mkdir -p ~/.arduino15
-    arduino-cli config init
-    arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-    arduino-cli core install arduino:avr
-    arduino-cli core install esp32:esp32
-    arduino-cli lib install LedControl
-    arduino-cli lib install BluetoothSerial
-    arduino-cli lib install ESP32Servo
+    ~/local/bin/arduino-cli config init
+    ~/local/bin/arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+    ~/local/bin/arduino-cli core install arduino:avr
+    ~/local/bin/arduino-cli core install esp32:esp32
+    ~/local/bin/arduino-cli lib install LedControl
+    ~/local/bin/arduino-cli lib install BluetoothSerial
+    ~/local/bin/arduino-cli lib install ESP32Servo
 
     # Create virtual environment and install Python dependencies
     if [ ! -d "venv" ]; then
@@ -199,8 +187,8 @@ main() {
 
     # Upload camera sketch
     info "Uploading camera sketch to $camera_port..."
-    arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
-    arduino-cli upload -p "$camera_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
+    ~/local/bin/arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
+    ~/local/bin/arduino-cli upload -p "$camera_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
 
     # Disconnect camera board
     info "Please disconnect the camera board, connect the main board and press enter..."
@@ -215,8 +203,8 @@ main() {
 
     # Upload main sketch
     info "Uploading main sketch to $main_port..."
-    arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
-    arduino-cli upload -p "$main_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
+    ~/local/bin/arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
+    ~/local/bin/arduino-cli upload -p "$main_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
 
     # Power on the equipment
     info "Please power on the hardware now..."
@@ -225,19 +213,31 @@ main() {
     # Bluetooth configuration
     info "Bluetooth Configuration Setup"
 
+    # Power on the camera module
+    info "Please power on the camera module..."
+    read -p "" dummy
+
     # List available Bluetooth devices
     list_bluetooth_devices
 
     # Prompt for first Bluetooth device
-    read -p "Enter the number of the first Bluetooth device: " bt1_num
+    read -p "Enter the number of the camera module: " bt1_num
     bt1_addr=$(bluetoothctl devices | grep -v "Device" | sed -n "${bt1_num}p" | awk '{print $2}')
 
+
+    # Power on the camera module
+    info "Please power on the main board..."
+    read -p "" dummy
+
+    # List available Bluetooth devices
+    list_bluetooth_devices
+
     # Prompt for second Bluetooth device
-    read -p "Enter the number of the second Bluetooth device: " bt2_num
+    read -p "Enter the number of the main board: " bt2_num
     bt2_addr=$(bluetoothctl devices | grep -v "Device" | sed -n "${bt2_num}p" | awk '{print $2}')
 
     # Configure hardware
-    configure_hardware "$camera_port" "$main_port" "$bt1_addr" "$bt2_addr"
+    configure_hardware "$bt1_addr" "$bt2_addr"
 
     # Connect to Bluetooth devices
     info "Connecting to Bluetooth devices..."
