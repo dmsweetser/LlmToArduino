@@ -2,6 +2,8 @@
 #include <Arduino.h>
 #include <ESP32Servo.h>
 
+String commandBuffer = "";
+
 // === Motor Pins ===
 const int M1_Forward = 128;
 const int M1_Backward = 64;

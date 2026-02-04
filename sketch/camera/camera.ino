@@ -2,6 +2,8 @@
 #include "esp_camera.h"
 #include <BluetoothSerial.h>
 
+String commandBuffer = "";
+
 // === Camera Pin Mapping (ESP32-CAM) ===
 #define PWDN    -1
 #define RESET   -1
