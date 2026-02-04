@@ -75,11 +75,6 @@ download_with_resume() {
     done
 }
 
-# Function to list available serial devices
-list_serial_devices() {
-    info "Available serial devices:"
-    ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print NR " - " $9 " (" $10 ")"}'
-}
 
 # Function to list available Bluetooth devices
 list_bluetooth_devices() {
@@ -180,12 +175,18 @@ main() {
     # Hardware configuration
     info "Hardware Configuration Setup"
 
+    # Get serial devices
+    serial_devices=($(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print $9}'))
+
     # List available serial devices
-    list_serial_devices
+    info "Available serial devices:"
+    for i in "${!serial_devices[@]}"; do
+        echo "$((i+1)) - ${serial_devices[i]}"
+    done
 
     # Prompt for camera board
     read -p "Enter the number of the camera board device: " camera_num
-    camera_port=$(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | sed -n "${camera_num}p" | awk '{print $9}')
+    camera_port="${serial_devices[$((camera_num-1))]}"
 
     # Upload camera sketch
     info "Uploading camera sketch to $camera_port..."
@@ -196,12 +197,18 @@ main() {
     info "Please disconnect the camera board, connect the main board and press enter..."
     read -p "" dummy
 
+        # Get serial devices
+    serial_devices=($(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print $9}'))
+
     # List available serial devices
-    list_serial_devices
+    info "Available serial devices:"
+    for i in "${!serial_devices[@]}"; do
+        echo "$((i+1)) - ${serial_devices[i]}"
+    done
 
     # Prompt for main board
     read -p "Enter the number of the main board device: " main_num
-    main_port=$(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | sed -n "${main_num}p" | awk '{print $9}')
+    main_port=$"${serial_devices[$((camera_num-1))]}"
 
     # Upload main sketch
     info "Uploading main sketch to $main_port..."
