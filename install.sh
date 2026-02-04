@@ -151,12 +151,7 @@ main() {
         rfkill \
         pulseaudio-module-bluetooth
 
-    sudo apt update
-    sudo apt install snapd
-    sudo snap install core
-    sudo snap install snapd
-    sudo snap refresh core
-    sudo snap install arduino-cli
+    curl -fsSL https://raw.githubusercontent.com | BINDIR=~/.local/bin sh
 
     # Add user to dialout group
     info "Adding user to dialout group..."
