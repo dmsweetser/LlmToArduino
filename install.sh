@@ -187,79 +187,90 @@ main() {
         echo "$((i+1)) - ${serial_devices[i]}"
     done
 
-    # Prompt for camera board
-    read -p "Enter the number of the camera board device: " camera_num
-    camera_port="${serial_devices[$((camera_num-1))]}"
-    echo "Camera port ${camera_port} selected"
+    # Prompt the user and read their response into the 'response' variable
+    read -p "Install Arduino scripts? (y/n): " response
 
-    # Upload camera sketch
-    info "Uploading camera sketch to $camera_port..."
-    ~/local/bin/arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
-    ~/local/bin/arduino-cli upload -p "$camera_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
+    # Check the value of the 'response' variable using an if statement
+    if [[ "$response" == "y" || "$response" == "Y" ]]; then
+        # Prompt for camera board
+        read -p "Enter the number of the camera board device: " camera_num
+        camera_port="${serial_devices[$((camera_num-1))]}"
+        echo "Camera port ${camera_port} selected"
 
-    # Disconnect camera board
-    info "Please disconnect the camera board, connect the main board and press enter..."
-    read -p "" dummy
+        # Upload camera sketch
+        info "Uploading camera sketch to $camera_port..."
+        ~/local/bin/arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
+        ~/local/bin/arduino-cli upload -p "$camera_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/camera"
 
-    # Get serial devices
-    info "Available serial devices"
-    serial_devices=($(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print $10}'))
+        # Disconnect camera board
+        info "Please disconnect the camera board, connect the main board and press enter..."
+        read -p "" dummy
 
-    # List available serial devices
-    for i in "${!serial_devices[@]}"; do
-        echo "$((i+1)) - ${serial_devices[i]}"
-    done
+        # Get serial devices
+        info "Available serial devices"
+        serial_devices=($(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print $10}'))
 
-    # Prompt for camera board
-    read -p "Enter the number of the main board device: " main_num
-    main_port="${serial_devices[$((main_num-1))]}"
-    echo "Main port ${main_port} selected"
+        # List available serial devices
+        for i in "${!serial_devices[@]}"; do
+            echo "$((i+1)) - ${serial_devices[i]}"
+        done
 
-    # Upload main sketch
-    info "Uploading main sketch to $main_port..."
-    ~/local/bin/arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
-    ~/local/bin/arduino-cli upload -p "$main_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
+        # Prompt for camera board
+        read -p "Enter the number of the main board device: " main_num
+        main_port="${serial_devices[$((main_num-1))]}"
+        echo "Main port ${main_port} selected"
 
-    # Power on the equipment
-    info "Please power on the hardware now..."
-    read -p "" dummy
-
-    # Bluetooth configuration
-    info "Bluetooth Configuration Setup"
-
-    # Power on the camera module
-    info "Please power on the camera module..."
-    read -p "" dummy
-
-    # List available Bluetooth devices
-    list_bluetooth_devices
-
-    # Prompt for first Bluetooth device
-    read -p "Enter the number of the camera module: " bt1_num
-    bt1_addr=$(bluetoothctl devices | grep -v "Device" | sed -n "${bt1_num}p" | awk '{print $2}')
+        # Upload main sketch
+        info "Uploading main sketch to $main_port..."
+        ~/local/bin/arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
+        ~/local/bin/arduino-cli upload -p "$main_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
 
 
-    # Power on the camera module
-    info "Please power on the main board..."
-    read -p "" dummy
+    # Prompt the user and read their response into the 'response' variable
+    read -p "Configure Bluetooth devices? (y/n): " response
 
-    # List available Bluetooth devices
-    list_bluetooth_devices
+    # Check the value of the 'response' variable using an if statement
+    if [[ "$response" == "y" || "$response" == "Y" ]]; then
+        # Power on the equipment
+        info "Please power on the hardware now..."
+        read -p "" dummy
 
-    # Prompt for second Bluetooth device
-    read -p "Enter the number of the main board: " bt2_num
-    bt2_addr=$(bluetoothctl devices | grep -v "Device" | sed -n "${bt2_num}p" | awk '{print $2}')
+        # Bluetooth configuration
+        info "Bluetooth Configuration Setup"
 
-    # Configure hardware
-    configure_hardware "$bt1_addr" "$bt2_addr"
+        # Power on the camera module
+        info "Please power on the camera module..."
+        read -p "" dummy
 
-    # Connect to Bluetooth devices
-    info "Connecting to Bluetooth devices..."
-    sudo rfcomm bind /dev/rfcomm0 "$bt1_addr" 1
-    sudo rfcomm bind /dev/rfcomm1 "$bt2_addr" 1
+        # List available Bluetooth devices
+        list_bluetooth_devices
 
-    info "Installation and configuration completed successfully."
-    info "Configuration saved to $CONFIG_FILE"
+        # Prompt for first Bluetooth device
+        read -p "Enter the number of the camera module: " bt1_num
+        bt1_addr=$(bluetoothctl devices | grep -v "Device" | sed -n "${bt1_num}p" | awk '{print $2}')
+
+
+        # Power on the camera module
+        info "Please power on the main board..."
+        read -p "" dummy
+
+        # List available Bluetooth devices
+        list_bluetooth_devices
+
+        # Prompt for second Bluetooth device
+        read -p "Enter the number of the main board: " bt2_num
+        bt2_addr=$(bluetoothctl devices | grep -v "Device" | sed -n "${bt2_num}p" | awk '{print $2}')
+
+        # Configure hardware
+        configure_hardware "$bt1_addr" "$bt2_addr"
+
+        # Connect to Bluetooth devices
+        info "Connecting to Bluetooth devices..."
+        sudo rfcomm bind /dev/rfcomm0 "$bt1_addr" 1
+        sudo rfcomm bind /dev/rfcomm1 "$bt2_addr" 1
+
+        info "Installation and configuration completed successfully."
+        info "Configuration saved to $CONFIG_FILE"
 }
 
 # Run main function
