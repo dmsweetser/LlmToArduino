@@ -175,23 +175,25 @@ main() {
     download_with_resume "$LLM_URL" "$LLM_MODEL"
     download_with_resume "$MMPROJ_URL" "$MMPROJ_MODEL"
 
-    # Hardware configuration
-    info "Hardware Configuration Setup"
-
-    # Get serial devices
-    info "Available serial devices"
-    serial_devices=($(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print $10}'))
-
-    # List available serial devices
-    for i in "${!serial_devices[@]}"; do
-        echo "$((i+1)) - ${serial_devices[i]}"
-    done
-
     # Prompt the user and read their response into the 'response' variable
     read -p "Install Arduino scripts? (y/n): " response
 
     # Check the value of the 'response' variable using an if statement
     if [[ "$response" == "y" || "$response" == "Y" ]]; then
+
+
+        # Hardware configuration
+        info "Hardware Configuration Setup"
+
+        # Get serial devices
+        info "Available serial devices"
+        serial_devices=($(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print $10}'))
+
+        # List available serial devices
+        for i in "${!serial_devices[@]}"; do
+            echo "$((i+1)) - ${serial_devices[i]}"
+        done
+
         # Prompt for camera board
         read -p "Enter the number of the camera board device: " camera_num
         camera_port="${serial_devices[$((camera_num-1))]}"
