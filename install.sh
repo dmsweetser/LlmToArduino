@@ -80,6 +80,7 @@ download_with_resume() {
 # Function to list available Bluetooth devices
 list_bluetooth_devices() {
     info "Available Bluetooth devices - enter 'scan on' to begin scanning, then exit once devices are listed..."
+    sudo systemctl restart bluetooth
     bluetoothctl
     bluetoothctl devices | grep -v "Device" | awk '{print NR " - " $3 " " $2}'
 }
