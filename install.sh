@@ -224,6 +224,7 @@ main() {
         info "Uploading main sketch to $main_port..."
         ~/local/bin/arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
         ~/local/bin/arduino-cli upload -p "$main_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
+    fi        
 
 
     # Prompt the user and read their response into the 'response' variable
@@ -271,6 +272,7 @@ main() {
 
         info "Installation and configuration completed successfully."
         info "Configuration saved to $CONFIG_FILE"
+    fi
 }
 
 # Run main function
