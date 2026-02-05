@@ -75,12 +75,7 @@ download_with_resume() {
     done
 }
 
-list_serial_devices() {
-    info "Available serial devices:"
-    ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print NR " - " $9 " (" $10 ")"}'
-    # Store the device paths in an array for later use
-    echo "serial_devices=($(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print $9}'))" >> /tmp/serial_devices.tmp
-}
+
 
 # Function to list available Bluetooth devices
 list_bluetooth_devices() {
@@ -181,12 +176,19 @@ main() {
     # Hardware configuration
     info "Hardware Configuration Setup"
 
+    # Get serial devices
+    info "Available serial devices"
+    serial_devices=($(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print $10}'))
+
     # List available serial devices
-    list_serial_devices
+    for i in "${!serial_devices[@]}"; do
+        echo "$((i+1)) - ${serial_devices[i]}"
+    done
 
     # Prompt for camera board
     read -p "Enter the number of the camera board device: " camera_num
-    camera_port=$(awk -v num="$camera_num" 'NR==num {print $2}' /tmp/serial_devices.tmp)
+    camera_port="${serial_devices[$((camera_num-1))]}"
+    echo "Camera port ${camera_port} selected"
 
     # Upload camera sketch
     info "Uploading camera sketch to $camera_port..."
@@ -197,12 +199,19 @@ main() {
     info "Please disconnect the camera board, connect the main board and press enter..."
     read -p "" dummy
 
-    # List available serial devices
-    list_serial_devices
+    # Get serial devices
+    info "Available serial devices"
+    serial_devices=($(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print $10}'))
 
-    # Prompt for main board
+    # List available serial devices
+    for i in "${!serial_devices[@]}"; do
+        echo "$((i+1)) - ${serial_devices[i]}"
+    done
+
+    # Prompt for camera board
     read -p "Enter the number of the main board device: " main_num
-    main_port=$(awk -v num="$main_num" 'NR==num {print $2}' /tmp/serial_devices.tmp)
+    main_port="${serial_devices[$((main_num-1))]}"
+    echo "Main port ${main_port} selected"
 
     # Upload main sketch
     info "Uploading main sketch to $main_port..."
