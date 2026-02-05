@@ -284,10 +284,6 @@ void setup() {
   // Bluetooth
   SerialBT.begin("ESP32-Car");
   debugPrint("Bluetooth Serial started\n");
-
-  // Debug
-  Serial.begin(115200);
-  delay(1000);
   debugPrint("ESP32-Car: Ready.\n");
   debugPrint("Send: getCapabilities to see all commands.\n");
 }

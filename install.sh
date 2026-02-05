@@ -80,6 +80,7 @@ download_with_resume() {
 # Function to list available Bluetooth devices
 list_bluetooth_devices() {
     info "Available Bluetooth devices:"
+    bluetoothctl scan on &
     bluetoothctl devices | grep -v "Device" | awk '{print NR " - " $3 " " $2}'
 }
 

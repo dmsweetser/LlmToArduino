@@ -160,11 +160,6 @@ void captureAndStream() {
 
 // === Main Setup ===
 void setup() {
-  // Initialize serial for debugging
-  Serial.begin(115200);
-  delay(1000);
-  debugPrint("Camera ESP32: Starting...\n");
-
   // Initialize camera
   if (esp_camera_init(&config) != ESP_OK) {
     debugPrint("Camera init failed!\n");
