@@ -181,7 +181,6 @@ main() {
     # Check the value of the 'response' variable using an if statement
     if [[ "$response" == "y" || "$response" == "Y" ]]; then
 
-
         # Hardware configuration
         info "Hardware Configuration Setup"
 
