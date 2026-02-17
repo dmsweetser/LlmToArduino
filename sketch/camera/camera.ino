@@ -160,7 +160,19 @@ void captureAndStream() {
 
 // === Main Setup ===
 void setup() {
+  // Initialize Serial for debugging
+  Serial.begin(115200);
+
+  // Initialize Bluetooth first
+  debugPrint("Initializing Bluetooth...\n");
+  if (!SerialBT.begin("ESP32-Camera")) {
+    debugPrint("Bluetooth initialization failed!\n");
+    while (1) delay(1000);
+  }
+  debugPrint("Bluetooth ready!\n");
+
   // Initialize camera
+  debugPrint("Initializing camera...\n");
   if (esp_camera_init(&config) != ESP_OK) {
     debugPrint("Camera init failed!\n");
     while (1) delay(1000);
@@ -170,9 +182,6 @@ void setup() {
   sensor_t *s = esp_camera_sensor_get();
   s->set_framesize(s, FRAMESIZE_QVGA);
 
-  // Initialize Bluetooth
-  SerialBT.begin("ESP32-Camera");
-  debugPrint("Bluetooth Serial started\n");
   debugPrint("Camera ready. Waiting for commands...\n");
 }
 
