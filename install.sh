@@ -85,11 +85,12 @@ list_bluetooth_devices() {
         sudo systemctl restart bluetooth
         sleep 2
 
-        timeout 10 bluetoothctl power on
-        timeout 10 bluetoothctl scan on
+        info "Scanning for Bluetooth devices..."
+        scan_output=$(echo -e "power on\nscan on" | bluetoothctl --timeout=10)
+        sleep 5
+        devices=$(echo -e "devices\nquit" | bluetoothctl | awk '/Device/ {print $2}')
 
-        # Get available devices with proper parsing
-        devices=$(timeout 10 bluetoothctl devices | awk '/Device [0-9A-F:]+/ {print $2}' | grep -v "No")
+        echo $devices
 
         if [ -z "$devices" ]; then
             info "No devices found. Please power on your devices and try again."
@@ -320,6 +321,8 @@ main() {
         # Power on the camera module
         info "Please power on the camera module..."
         read -p "" dummy
+
+
 
         # Get Bluetooth devices
         devices_list=$(list_bluetooth_devices)
