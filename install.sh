@@ -256,6 +256,9 @@ main() {
         # Hardware configuration
         info "Hardware Configuration Setup"
 
+        info "Please connect the camera board now and press Enter..."
+        read -p "" dummy
+
         # Get serial devices
         info "Available serial devices"
         serial_devices=($(ls -l /dev/tty* | grep -E "tty(ACM|USB|AMA)" | awk '{print $10}'))
