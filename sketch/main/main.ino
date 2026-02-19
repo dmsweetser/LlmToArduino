@@ -281,7 +281,7 @@ void setup() {
   pinMode(ULTRASONIC_TRIG, OUTPUT);
   pinMode(ULTRASONIC_ECHO, INPUT);
 
-  processCommand("stop", "")
+  processCommand("stop", "");
 
   // Bluetooth
   SerialBT.begin("ESP32-Car");
