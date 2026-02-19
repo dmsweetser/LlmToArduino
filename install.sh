@@ -85,12 +85,16 @@ list_bluetooth_devices() {
         sudo systemctl restart bluetooth
         sleep 2
 
-        info "Scanning for Bluetooth devices..."
-        scan_output=$(echo -e "power on\nscan on" | bluetoothctl --timeout=10)
+        # More thorough Bluetooth initialization
+        bluetoothctl -a <<EOF
+power on
+agent on
+scan on
+EOF
         sleep 5
-        devices=$(echo -e "devices\nquit" | bluetoothctl | awk '/Device/ {print $2}')
 
-        echo $devices
+        # Get available devices with more robust parsing
+        devices=$(bluetoothctl devices | awk '/Device [0-9A-F:]+/ {print $2}' | grep -v "No")
 
         if [ -z "$devices" ]; then
             info "No devices found. Please power on your devices and try again."
