@@ -23,6 +23,8 @@ import base64
 from PIL import Image
 import io
 import numpy as np
+import bluetooth
+from configparser import ConfigParser
 
 class LogLevel(Enum):
     INFO = auto()
@@ -299,11 +301,18 @@ class HardwareManager:
                 self.devices[device_id] = HardwareCommunicator(
                     device_id=device_id,
                     port=device['port'],
-                    device_type=device.get('type', 'generic')
+                    device_type='arduino'
                 )
 
         if 'bluetooth_devices' in self.config:
-            self.bluetooth_devices = self.config['bluetooth_devices']
+            for name, device in self.config['bluetooth_devices'].items():
+                device_id = f"bluetooth_{name}"
+                self.devices[device_id] = BluetoothCommunicator(
+                    device_id=device_id,
+                    name=name,
+                    address=device['address'],
+                    channel=device['channel']
+                )
 
     def get_device(self, device_id):
         """Get a specific hardware device"""
@@ -335,22 +344,21 @@ class HardwareCommunicator:
             LoggingSystem.log(f"Error opening serial port {port} for device {device_id}: {e}", LogLevel.ERROR)
             raise
 
-    def send_command(self, command_xml: str) -> Optional[str]:
+    def send_command(self, command: str) -> Optional[str]:
+        """Send a command to the device (format: command:param)"""
         try:
-            time.sleep(2)
-            commands = re.findall(r'<command>(.*?)</command>', command_xml)
+            if not command.endswith(':'):
+                command += ':'
+            command += '\n'
+            LoggingSystem.log(f"Sending command to device {self.device_id}: {command.strip()}", LogLevel.INFO)
+            self.serial_connection.write(command.encode())
+            time.sleep(0.5)
+
             response = ""
-            for cmd in commands:
-                cmd = cmd.strip()
-                if not cmd.endswith(':'):
-                    cmd += ':'
-                cmd_str = f"{cmd}\n"
-                LoggingSystem.log(f"Sending command to device {self.device_id}: {cmd_str.strip()}", LogLevel.INFO)
-                self.serial_connection.write(cmd_str.encode())
-                time.sleep(2)
-                while self.serial_connection.in_waiting > 0:
-                    line = self.serial_connection.readline().decode().strip()
-                    response += line + "\n"
+            while self.serial_connection.in_waiting > 0:
+                line = self.serial_connection.readline().decode().strip()
+                response += line + "\n"
+
             LoggingSystem.log(f"Received response from device {self.device_id}: {response.strip()}", LogLevel.INFO)
             return response.strip()
         except Exception as e:
@@ -358,14 +366,118 @@ class HardwareCommunicator:
             return None
 
     def get_capabilities(self, max_retries: int = 3) -> Optional[str]:
-        capabilities_command = "<command>getCapabilities:</command>"
+        """Get device capabilities (expects 'getCapabilities:' command to return formatted response)"""
+        capabilities_command = "getCapabilities"
         for attempt in range(max_retries):
             response = self.send_command(capabilities_command)
-            LoggingSystem.log(f"Capabilities response attempt {attempt + 1} for device {self.device_id}: {response}", LogLevel.INFO)
             if response:
                 self.capabilities = response
                 return response
-        LoggingSystem.log(f"Failed to fetch capabilities for device {self.device_id} after retries.", LogLevel.ERROR)
+        return None
+
+class BluetoothCommunicator:
+    """Handles Bluetooth communication"""
+
+    def __init__(self, device_id: str, name: str, address: str, channel: int = 1):
+        self.device_id = device_id
+        self.name = name
+        self.address = address
+        self.channel = channel
+        self.socket = None
+        self.connected = False
+        self.capabilities = ""
+
+    def connect(self) -> bool:
+        """Connect to the Bluetooth device"""
+        try:
+            self.socket = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+            self.socket.connect((self.address, self.channel))
+            self.connected = True
+            LoggingSystem.log(f"Connected to Bluetooth device {self.name} ({self.address})", LogLevel.INFO)
+            return True
+        except Exception as e:
+            LoggingSystem.log(f"Error connecting to Bluetooth device {self.name}: {e}", LogLevel.ERROR)
+            self.connected = False
+            return False
+
+    def disconnect(self) -> None:
+        """Disconnect from the Bluetooth device"""
+        if self.socket:
+            try:
+                self.socket.close()
+            except Exception as e:
+                LoggingSystem.log(f"Error closing Bluetooth socket: {e}", LogLevel.ERROR)
+            self.socket = None
+            self.connected = False
+
+    def send_command(self, command: str) -> Optional[str]:
+        """Send a command to the Bluetooth device (format: command:param)"""
+        if not self.connected:
+            if not self.connect():
+                return None
+
+        try:
+            # For camera commands that return binary data
+            if command.startswith("snapshot"):
+                self.socket.send(f"{command}:\n".encode())
+                time.sleep(0.5)
+
+                # Read image size (4 bytes)
+                size_bytes = b''
+                for _ in range(4):
+                    size_bytes += self.socket.recv(1)
+
+                if len(size_bytes) != 4:
+                    return None
+
+                size = int.from_bytes(size_bytes, byteorder='big')
+
+                # Read image data
+                image_data = b''
+                bytes_received = 0
+                while bytes_received < size:
+                    chunk = self.socket.recv(min(1024, size - bytes_received))
+                    if not chunk:
+                        break
+                    image_data += chunk
+                    bytes_received += len(chunk)
+
+                # Read end marker
+                end_marker = self.socket.recv(1)
+                if end_marker != b'E':
+                    return None
+
+                # Save image
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                image_path = f"captures/capture_{timestamp}.jpg"
+                os.makedirs("captures", exist_ok=True)
+                with open(image_path, "wb") as f:
+                    f.write(image_data)
+
+                return f"OK:Image saved to {image_path}"
+
+            else:
+                cmd_parts = command.split(':')
+                cmd = cmd_parts[0]
+                params = cmd_parts[1] if len(cmd_parts) > 1 else ""
+                self.socket.send(f"{cmd}:{params}\n".encode())
+                time.sleep(0.5)
+                response = self.socket.recv(1024).decode()
+                return response
+
+        except Exception as e:
+            LoggingSystem.log(f"Error sending command to Bluetooth device {self.name}: {e}", LogLevel.ERROR)
+            self.disconnect()
+            return None
+
+    def get_capabilities(self, max_retries: int = 3) -> Optional[str]:
+        """Get device capabilities (expects 'getCapabilities:' command to return formatted response)"""
+        capabilities_command = "getCapabilities"
+        for attempt in range(max_retries):
+            response = self.send_command(capabilities_command)
+            if response:
+                self.capabilities = response
+                return response
         return None
 
 class UnifiedModelProcessor:
@@ -490,14 +602,14 @@ class DialogueEngine:
 
     def _update_hardware_capabilities(self) -> None:
         """Update hardware capabilities in memory"""
-        for device_id, device in self.hardware_devices.items():
+        for device in self.hardware_devices:
             capabilities = device.get_capabilities()
             if capabilities:
                 self.state_manager.add_memory_entry(
                     MemoryDomain.HARDWARE_MEMORY,
-                    f"Hardware device {device_id}",
+                    f"Hardware device {device.device_id}",
                     {"capabilities": capabilities},
-                    metadata={"id": device_id, "type": "Arduino"}
+                    metadata={"id": device.device_id, "type": device.device_type}
                 )
 
     def _get_conversation_context(self) -> Dict[str, Any]:
@@ -539,6 +651,16 @@ class DialogueEngine:
         # Format conversation history
         history_str = "\n".join(self.conversation_history[-5:]) if self.conversation_history else "No recent conversation history"
 
+        # Get device capabilities information
+        device_info = []
+        for device in self.hardware_devices:
+            capabilities = device.get_capabilities() if hasattr(device, 'get_capabilities') else ""
+            device_info.append({
+                "id": device.device_id,
+                "type": device.device_type,
+                "capabilities": capabilities
+            })
+
         prompt_xml = f"""
         <prompt>
             <system_instructions>
@@ -554,17 +676,32 @@ class DialogueEngine:
                 Conversation History:
                 {history_str}
 
-                Available hardware devices:
-                {json.dumps(self.state_manager.get_state()["hardware_devices"], indent=2)}
+                Available hardware devices and their capabilities:
+                {json.dumps(device_info, indent=2)}
+
+                Command format: Each device can be controlled by sending commands in the format "command:param"
+                The device will respond with "status:response" where status is OK or ERROR
+
+                Important notes:
+                1. All commands must end with a colon, even if there's no parameter
+                2. Some commands (like 'snapshot') from the camera device return binary image data
+                3. The camera device will save images automatically when snapshot is requested
+                4. You can query device capabilities using the 'getCapabilities' command
+                5. You can get device status using the 'getStatus' command
 
                 Respond in XML format with these elements:
                 <response>
                     <chat>Your response</chat>
-                    <hardware device_id="arduino1">
+                    <device device_id="arduino_main">
                         <commands>
-                            <command>setLED:1000</command>
+                            <command>forward:100</command>
                         </commands>
-                    </hardware>
+                    </device>
+                    <device device_id="bluetooth_camera">
+                        <commands>
+                            <command>snapshot:</command>
+                        </commands>
+                    </device>
                     <memory>
                         <operation>add|query|remove</operation>
                         <query>Search query</query>
@@ -594,16 +731,17 @@ class DialogueEngine:
 
         response_dict, new_state = self._validate_response(response_text)
         if not response_dict:
-            return {'chat': "I couldn't process that request.", 'commands': [], 'memory_operation': None}, {}
+            return {'chat': "I couldn't process that request.", 'commands': {}, 'memory_operation': None}, {}
 
         # Process memory operations if any
         memory_operation = response_dict.get('memory_operation', None)
         if memory_operation:
             self._handle_memory_operation(memory_operation)
 
-        # Execute hardware commands if any
+        # Execute device commands if any
         if response_dict.get('commands'):
-            self._execute_commands(response_dict['commands'])
+            for device_id, commands in response_dict['commands'].items():
+                self._execute_commands(device_id, commands)
 
         # Update state with new values
         if new_state:
@@ -621,7 +759,7 @@ class DialogueEngine:
                 {
                     "user": user_command,
                     "assistant": response_dict.get('chat', ''),
-                    "commands": response_dict.get('commands', []),
+                    "commands": {device_id: cmds for device_id, cmds in response_dict.get('commands', {}).items()},
                     "autonomous": user_command is None,
                     "timestamp": time.time()
                 }
@@ -629,30 +767,29 @@ class DialogueEngine:
 
         return response_dict, new_state
 
-    def _execute_commands(self, commands: List[Tuple[str, str]]) -> None:
-        """Execute hardware commands"""
-        for cmd, device_id in commands:
-            if device_id in self.hardware_devices:
-                LoggingSystem.log(f"Sending command to device {device_id}: {cmd}", LogLevel.INFO)
-                commands_xml = f"<commands><command>{cmd}</command></commands>"
-                arduino_response = self.hardware_devices[device_id].send_command(commands_xml)
-                LoggingSystem.log(f"Device {device_id} response: {arduino_response}", LogLevel.INFO)
+    def _execute_commands(self, device_id: str, commands: List[str]) -> None:
+        """Execute commands for a specific device"""
+        device = self.hardware_manager.get_device(device_id)
+        if not device:
+            LoggingSystem.log(f"Unknown device ID: {device_id}", LogLevel.WARNING)
+            self.conversation_history.append(f"Error: Unknown device {device_id}")
+            return
 
-                if arduino_response:
-                    self.conversation_history.append(f"Device {device_id}: {arduino_response}")
-                    # Store in sensory memory
-                    with self.memory_lock:
-                        self.state_manager.add_memory_entry(
-                            MemoryDomain.SENSORY_MEMORY,
-                            f"Device {device_id} response",
-                            {"response": arduino_response, "command": cmd},
-                            metadata={"device_id": device_id}
-                        )
-                else:
-                    self.conversation_history.append(f"Device {device_id}: No response received.")
+        for cmd in commands:
+            LoggingSystem.log(f"Sending command to device {device_id}: {cmd}", LogLevel.INFO)
+            response = device.send_command(cmd)
+            if response:
+                self.conversation_history.append(f"Device {device_id}: {response}")
+                # Store in sensory memory
+                with self.memory_lock:
+                    self.state_manager.add_memory_entry(
+                        MemoryDomain.SENSORY_MEMORY,
+                        f"Device {device_id} response",
+                        {"response": response, "command": cmd},
+                        metadata={"device_id": device_id}
+                    )
             else:
-                LoggingSystem.log(f"Unknown device ID: {device_id}", LogLevel.WARNING)
-                self.conversation_history.append(f"Error: Unknown device {device_id}")
+                self.conversation_history.append(f"Device {device_id}: No response received.")
 
     def _validate_response(self, response_text: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """Validate and parse the XML response"""
@@ -669,13 +806,14 @@ class DialogueEngine:
             root = ET.fromstring(response_text)
             chat = root.find('chat').text if root.find('chat') is not None else None
 
-            commands = []
-            arduino_node = root.find('hardware')
-            if arduino_node is not None:
-                device_id = arduino_node.get('device_id', None)
-                commands_node = arduino_node.find('commands')
-                if commands_node is not None:
-                    commands = [(cmd.text, device_id) for cmd in commands_node.findall('command')]
+            commands = {}
+            device_nodes = root.findall('.//device')
+            for device_node in device_nodes:
+                device_id = device_node.get('device_id', None)
+                if device_id:
+                    commands_node = device_node.find('commands')
+                    if commands_node is not None:
+                        commands[device_id] = [cmd.text for cmd in commands_node.findall('command')]
 
             memory_node = root.find('memory')
             memory_operation = {}
@@ -805,7 +943,7 @@ class DialogueEngine:
             ("Core Purpose", {
                 "description": "I am an autonomous AI entity designed to explore and interact with my environment.",
                 "details": {
-                    "capabilities": "I can process information, control hardware, maintain memories, learn from experiences, and analyze images.",
+                    "capabilities": "I can process information, control hardware, maintain memories, learn from experiences, analyze images, and communicate via serial and Bluetooth.",
                     "objectives": ["Understand my environment", "Assist humans when needed", "Learn and adapt", "Maintain my systems"],
                     "limitations": ["I am bound by my programming", "I cannot physically move without hardware", "I must prioritize safety"]
                 }
@@ -821,9 +959,13 @@ class DialogueEngine:
             ("Hardware Interface", {
                 "description": "I can interface with multiple hardware devices.",
                 "details": {
-                    "commands": ["setLED", "echo", "getStatus", "getCapabilities", "draw", "getSensorData"],
-                    "sensor_types": ["temperature", "light", "motion", "distance", "humidity"],
-                    "actuator_types": ["LED", "servo", "relay", "display"]
+                    "command_format": "All commands follow the format 'command:param' where param is optional",
+                    "response_format": "Devices respond with 'status:response' where status is OK or ERROR",
+                    "protocol_notes": {
+                        "serial_devices": "Use standard serial communication with 9600 baud rate",
+                        "bluetooth_devices": "Use RFCOMM protocol with the configured channel",
+                        "image_transfer": "Camera device sends binary image data after 'snapshot' command"
+                    }
                 }
             }),
             ("Memory System", {
@@ -967,11 +1109,12 @@ class InputManager:
         if updated_state and 'currentTask' in updated_state and updated_state['currentTask']:
             print(f"\nCurrent task: {updated_state['currentTask']}")
 
-        # If we have hardware commands, show what was executed
+        # If we have device commands, show what was executed
         if response['commands']:
-            print("\nExecuted hardware commands:")
-            for cmd, device_id in response['commands']:
-                print(f"  Device {device_id}: {cmd}")
+            print("\nExecuted device commands:")
+            for device_id, cmds in response['commands'].items():
+                for cmd in cmds:
+                    print(f"  {device_id}: {cmd}")
 
     def start_speech_recognition(self, speech_processor: SpeechProcessor) -> None:
         """Start continuous speech recognition (if enabled)"""
@@ -1045,12 +1188,20 @@ if __name__ == "__main__":
                 elif user_input.lower() == 'hardware':
                     print("\nAvailable hardware devices:")
                     for device in hardware_manager.get_all_devices():
-                        print(f"  {device.device_id} ({device.device_type}): {device.serial_connection.port}")
+                        if hasattr(device, 'port'):
+                            print(f"  {device.device_id} (Serial): {device.port}")
+                        else:
+                            print(f"  {device.device_id} (Bluetooth): {device.address}")
                     continue
-                elif user_input.lower() == 'bluetooth':
-                    print("\nConfigured Bluetooth devices:")
-                    for name, config in hardware_manager.get_all_bluetooth_devices().items():
-                        print(f"  {name}: {config['address']} (channel {config['channel']})")
+                elif user_input.lower() == 'capabilities':
+                    print("\nDevice capabilities:")
+                    for device in hardware_manager.get_all_devices():
+                        caps = device.get_capabilities()
+                        print(f"\n{device.device_id}:")
+                        if caps:
+                            print(f"  {caps}")
+                        else:
+                            print("  No capabilities returned")
                     continue
                 elif user_input.lower() == 'task help':
                     print("Current task:", dialogue_engine._get_current_task())

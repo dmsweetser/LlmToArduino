@@ -75,14 +75,84 @@ download_with_resume() {
     done
 }
 
-
-
-# Function to list available Bluetooth devices
+# Function to list available Bluetooth devices with automatic scanning
 list_bluetooth_devices() {
-    info "Available Bluetooth devices - enter 'scan on' to begin scanning, then exit once devices are listed..."
-    sudo systemctl restart bluetooth
-    bluetoothctl
-    bluetoothctl devices | grep -v "Device" | awk '{print NR " - " $3 " " $2}'
+    local scan_attempt=0
+    local max_scans=5
+
+    while [ $scan_attempt -lt $max_scans ]; do
+        info "Scanning for Bluetooth devices (attempt $((scan_attempt+1))...)"
+        sudo systemctl restart bluetooth
+        sleep 2
+
+        # Get available devices
+        devices=$(timeout 10 bluetoothctl devices | grep -v "Device" | grep -v "No" | awk '{print $2}' || echo "")
+
+        if [ -z "$devices" ]; then
+            info "No devices found. Please power on your devices and try again."
+            read -p "Would you like to scan again? (y/n): " choice
+            case "$(echo $choice | tr '[:upper:]' '[:lower:]')" in
+                y|yes) ((scan_attempt++)) ;;
+                *) error_exit "Bluetooth device scanning cancelled." ;;
+            esac
+        else
+            echo "Available Bluetooth devices:"
+            echo "0 - Rescan"
+            echo "1 - None of the above"
+            count=2
+            while IFS= read -r line; do
+                echo "$count - $line"
+                ((count++))
+            done <<< "$devices"
+            return 0
+        fi
+    done
+
+    error_exit "Maximum scan attempts reached. No Bluetooth devices found."
+}
+
+# Function to select and pair a Bluetooth device
+select_bluetooth_device() {
+    local device_type="$1"
+    local devices_list="$2"
+    local count=0
+
+    while true; do
+        echo "Select $device_type device:"
+        count=0
+        while IFS= read -r line; do
+            echo "$count - $line"
+            ((count++))
+        done <<< "$devices_list"
+
+        read -p "Enter the number of your choice: " choice
+        case "$choice" in
+            0) # Rescan
+                devices_list=$(timeout 10 bluetoothctl devices | grep -v "Device" | grep -v "No" | awk '{print $2}' || echo "")
+                ;;
+            1) # None of the above
+                return 1
+                ;;
+            *)
+                if [ "$choice" -ge 0 ] && [ "$choice" -lt "$(echo "$devices_list" | grep -c .)" ]; then
+                    local selected_device=$(echo "$devices_list" | sed -n "$((choice+1))p")
+                    info "Attempting to pair with $selected_device..."
+                    echo "pair $selected_device" | bluetoothctl
+                    echo "trust $selected_device" | bluetoothctl
+                    echo "connect $selected_device" | bluetoothctl
+                    sleep 2
+                    if bluetoothctl info "$selected_device" | grep -q "Connected: yes"; then
+                        echo "$selected_device"
+                        return 0
+                    else
+                        info "Failed to connect to $selected_device. Please check the device and try again."
+                    fi
+                else
+                    info "Invalid selection. Please try again."
+                fi
+                ;;
+        esac
+    done
 }
 
 # Function to configure hardware ports
@@ -136,7 +206,8 @@ main() {
         libbluetooth-dev \
         rfkill \
         pulseaudio-module-bluetooth \
-        python3.11-venv
+        python3.11-venv \
+        python3-bluez
 
     mkdir -p ~/local/bin
     echo 'export PATH="$HOME/local/bin:$PATH"' >> ~/.bashrc
@@ -167,8 +238,9 @@ main() {
 
     info "Activating virtual environment and installing Python packages..."
     source venv/bin/activate
-    pip install --upgrade pip
+    pip install --upgrade setuptools pip wheel
     pip install -r "$REQUIREMENTS_FILE"
+    pip install git+https://github.com/pybluez/pybluez.git
 
     # Download LLM models with resume capability
     info "Downloading LLM models..."
@@ -225,8 +297,7 @@ main() {
         info "Uploading main sketch to $main_port..."
         ~/local/bin/arduino-cli compile --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
         ~/local/bin/arduino-cli upload -p "$main_port" --fqbn "esp32:esp32:esp32" "$SKETCH_DIR/main"
-    fi        
-
+    fi
 
     # Prompt the user and read their response into the 'response' variable
     read -p "Configure Bluetooth devices? (y/n): " response
@@ -244,24 +315,27 @@ main() {
         info "Please power on the camera module..."
         read -p "" dummy
 
-        # List available Bluetooth devices
-        list_bluetooth_devices
+        # Get Bluetooth devices
+        devices_list=$(list_bluetooth_devices)
 
-        # Prompt for first Bluetooth device
-        read -p "Enter the number of the camera module: " bt1_num
-        bt1_addr=$(bluetoothctl devices | grep -v "Device" | sed -n "${bt1_num}p" | awk '{print $2}')
+        # Select camera board
+        bt1_addr=$(select_bluetooth_device "camera" "$devices_list")
+        if [ -z "$bt1_addr" ]; then
+            error_exit "Camera board selection cancelled."
+        fi
 
-
-        # Power on the camera module
+        # Power on the main board
         info "Please power on the main board..."
         read -p "" dummy
 
-        # List available Bluetooth devices
-        list_bluetooth_devices
+        # Get Bluetooth devices again
+        devices_list=$(list_bluetooth_devices)
 
-        # Prompt for second Bluetooth device
-        read -p "Enter the number of the main board: " bt2_num
-        bt2_addr=$(bluetoothctl devices | grep -v "Device" | sed -n "${bt2_num}p" | awk '{print $2}')
+        # Select main board
+        bt2_addr=$(select_bluetooth_device "main" "$devices_list")
+        if [ -z "$bt2_addr" ]; then
+            error_exit "Main board selection cancelled."
+        fi
 
         # Configure hardware
         configure_hardware "$bt1_addr" "$bt2_addr"
