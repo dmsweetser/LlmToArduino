@@ -88,8 +88,8 @@ list_bluetooth_devices() {
         timeout 10 bluetoothctl power on
         timeout 10 bluetoothctl scan on
 
-        # Get available devices
-        devices=$(timeout 10 bluetoothctl devices | grep -v "Device" | grep -v "No" | awk '{print $2}' || echo "")
+        # Get available devices with proper parsing
+        devices=$(timeout 10 bluetoothctl devices | awk '/Device [0-9A-F:]+/ {print $2}' | grep -v "No")
 
         if [ -z "$devices" ]; then
             info "No devices found. Please power on your devices and try again."
