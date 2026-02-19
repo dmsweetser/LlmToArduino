@@ -75,106 +75,58 @@ download_with_resume() {
     done
 }
 
-# Function to list available Bluetooth devices with automatic scanning
-list_bluetooth_devices() {
-    local scan_attempt=0
-    local max_scans=5
-
-    while [ $scan_attempt -lt $max_scans ]; do
-        info "Scanning for Bluetooth devices (attempt $((scan_attempt+1))...)"
-        sudo systemctl restart bluetooth
-        sleep 2
-
-        # More thorough Bluetooth initialization
-        bluetoothctl -a <<EOF
+# Function to configure hardware with manual MAC entry
+configure_hardware() {
+    # Start bluetoothctl and scan
+    info "Starting Bluetooth scan for 10 seconds..."
+    bluetoothctl <<EOF
 power on
-agent on
 scan on
 EOF
-        sleep 5
+    sleep 10
 
-        # Get available devices with more robust parsing
-        devices=$(bluetoothctl devices | awk '/Device [0-9A-F:]+/ {print $2}' | grep -v "No")
+    # Show available devices
+    info "Available Bluetooth devices:"
+    devices=$(bluetoothctl devices | awk '/Device [0-9A-F:]+/ {print $2}')
+    if [ -z "$devices" ]; then
+        info "No devices found. Please ensure your devices are powered on and discoverable."
+    else
+        echo "$devices"
+    fi
 
-        if [ -z "$devices" ]; then
-            info "No devices found. Please power on your devices and try again."
-            read -p "Would you like to scan again? (y/n): " choice
-            case "$(echo $choice | tr '[:upper:]' '[:lower:]')" in
-                y|yes) ((scan_attempt++)) ;;
-                *) error_exit "Bluetooth device scanning cancelled." ;;
-            esac
-        else
-            echo "Available Bluetooth devices:"
-            echo "0 - Rescan"
-            echo "1 - None of the above"
-            count=2
-            while IFS= read -r line; do
-                echo "$count - $line"
-                ((count++))
-            done <<< "$devices"
-            return 0
-        fi
-    done
+    # Get camera MAC address
+    read -p "Enter the MAC address of your camera module: " camera_mac
+    if [ -z "$camera_mac" ]; then
+        error_exit "Camera MAC address is required."
+    fi
 
-    error_exit "Maximum scan attempts reached. No Bluetooth devices found."
-}
+    # Validate MAC format
+    if ! [[ "$camera_mac" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
+        error_exit "Invalid MAC address format for camera. Expected format: XX:XX:XX:XX:XX:XX"
+    fi
 
-# Function to select and pair a Bluetooth device
-select_bluetooth_device() {
-    local device_type="$1"
-    local devices_list="$2"
-    local count=0
+    # Get main board MAC address
+    read -p "Enter the MAC address of your main board: " main_mac
+    if [ -z "$main_mac" ]; then
+        error_exit "Main board MAC address is required."
+    fi
 
-    while true; do
-        echo "Select $device_type device:"
-        count=0
-        while IFS= read -r line; do
-            echo "$count - $line"
-            ((count++))
-        done <<< "$devices_list"
+    # Validate MAC format
+    if ! [[ "$main_mac" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
+        error_exit "Invalid MAC address format for main board. Expected format: XX:XX:XX:XX:XX:XX"
+    fi
 
-        read -p "Enter the number of your choice: " choice
-        case "$choice" in
-            0) # Rescan
-                devices_list=$(timeout 10 bluetoothctl devices | grep -v "Device" | grep -v "No" | awk '{print $2}' || echo "")
-                ;;
-            1) # None of the above
-                return 1
-                ;;
-            *)
-                if [ "$choice" -ge 0 ] && [ "$choice" -lt "$(echo "$devices_list" | grep -c .)" ]; then
-                    local selected_device=$(echo "$devices_list" | sed -n "$((choice+1))p")
-                    info "Attempting to pair with $selected_device..."
-                    echo "pair $selected_device" | bluetoothctl
-                    echo "trust $selected_device" | bluetoothctl
-                    echo "connect $selected_device" | bluetoothctl
-                    sleep 2
-                    if bluetoothctl info "$selected_device" | grep -q "Connected: yes"; then
-                        echo "$selected_device"
-                        return 0
-                    else
-                        info "Failed to connect to $selected_device. Please check the device and try again."
-                    fi
-                else
-                    info "Invalid selection. Please try again."
-                fi
-                ;;
-        esac
-    done
-}
-
-# Function to configure hardware ports
-configure_hardware() {
+    # Create config file
     local config_content=$(cat <<EOF
 {
     "bluetooth_devices": {
         "camera_board": {
-            "address": "$1",
+            "address": "$camera_mac",
             "channel": 1,
             "description": "Camera module"
         },
         "main_board": {
-            "address": "$2",
+            "address": "$main_mac",
             "channel": 1,
             "description": "Main control board"
         }
@@ -322,41 +274,8 @@ main() {
         # Bluetooth configuration
         info "Bluetooth Configuration Setup"
 
-        # Power on the camera module
-        info "Please power on the camera module..."
-        read -p "" dummy
-
-
-
-        # Get Bluetooth devices
-        devices_list=$(list_bluetooth_devices)
-
-        # Select camera board
-        bt1_addr=$(select_bluetooth_device "camera" "$devices_list")
-        if [ -z "$bt1_addr" ]; then
-            error_exit "Camera board selection cancelled."
-        fi
-
-        # Power on the main board
-        info "Please power on the main board..."
-        read -p "" dummy
-
-        # Get Bluetooth devices again
-        devices_list=$(list_bluetooth_devices)
-
-        # Select main board
-        bt2_addr=$(select_bluetooth_device "main" "$devices_list")
-        if [ -z "$bt2_addr" ]; then
-            error_exit "Main board selection cancelled."
-        fi
-
-        # Configure hardware
-        configure_hardware "$bt1_addr" "$bt2_addr"
-
-        # Connect to Bluetooth devices
-        info "Connecting to Bluetooth devices..."
-        sudo rfcomm bind /dev/rfcomm0 "$bt1_addr" 1
-        sudo rfcomm bind /dev/rfcomm1 "$bt2_addr" 1
+        # Simple Bluetooth configuration with manual entry
+        configure_hardware
 
         info "Installation and configuration completed successfully."
         info "Configuration saved to $CONFIG_FILE"
