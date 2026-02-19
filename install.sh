@@ -85,6 +85,9 @@ list_bluetooth_devices() {
         sudo systemctl restart bluetooth
         sleep 2
 
+        timeout 10 bluetoothctl power on
+        timeout 10 bluetoothctl scan on
+
         # Get available devices
         devices=$(timeout 10 bluetoothctl devices | grep -v "Device" | grep -v "No" | awk '{print $2}' || echo "")
 
