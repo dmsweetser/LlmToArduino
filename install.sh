@@ -79,20 +79,13 @@ download_with_resume() {
 configure_hardware() {
     # Start bluetoothctl and scan
     info "Starting Bluetooth scan for 10 seconds..."
-    bluetoothctl <<EOF
-power on
-scan on
-EOF
+    bluetoothctl power on
+    bluetoothctl agent on
+    timeout 60 bluetoothctl scan on
     sleep 10
 
     # Show available devices
     info "Available Bluetooth devices:"
-    devices=$(bluetoothctl devices | awk '/Device [0-9A-F:]+/ {print $2}')
-    if [ -z "$devices" ]; then
-        info "No devices found. Please ensure your devices are powered on and discoverable."
-    else
-        echo "$devices"
-    fi
 
     # Get camera MAC address
     read -p "Enter the MAC address of your camera module: " camera_mac
