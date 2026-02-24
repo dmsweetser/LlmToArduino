@@ -27,6 +27,27 @@ info() {
 # Create directories if they don't exist
 mkdir -p "$CONFIG_DIR"
 
+# Function to check if arduino-cli is installed
+is_arduino_cli_installed() {
+    if command -v arduino-cli &> /dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# Function to install arduino-cli if needed
+install_arduino_cli() {
+    if is_arduino_cli_installed; then
+        info "Arduino CLI is already installed."
+        return 0
+    fi
+
+    info "Installing Arduino CLI..."
+    mkdir -p ~/local/bin
+    echo 'export PATH="$HOME/local/bin:$PATH"' >> ~/.bashrc
+    curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=~/local/bin sh
+}
+
 # Function to download with resume capability
 download_with_resume() {
     local url="$1"
@@ -86,6 +107,7 @@ configure_hardware() {
 
     # Show available devices
     info "Available Bluetooth devices:"
+    bluetoothctl devices
 
     # Get camera MAC address
     read -p "Enter the MAC address of your camera module: " camera_mac
@@ -162,26 +184,27 @@ main() {
         python3.11-venv \
         python3-bluez
 
-    mkdir -p ~/local/bin
-    echo 'export PATH="$HOME/local/bin:$PATH"' >> ~/.bashrc
-    curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=~/local/bin sh
+    # Install Arduino CLI only if needed
+    install_arduino_cli
 
     # Add user to dialout group
     info "Adding user to dialout group..."
     sudo usermod -aG dialout "$USERNAME"
     info "You may need to log out and back in for group changes to take effect."
 
-    # Set up Arduino CLI
-    info "Configuring Arduino CLI..."
-    mkdir -p ~/.arduino15
-    ~/local/bin/arduino-cli config init --overwrite
-    ~/local/bin/arduino-cli config set network.connection_timeout 480s
-    ~/local/bin/arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-    ~/local/bin/arduino-cli core install arduino:avr
-    ~/local/bin/arduino-cli core install esp32:esp32
-    ~/local/bin/arduino-cli lib install LedControl
-    ~/local/bin/arduino-cli lib install BluetoothSerial
-    ~/local/bin/arduino-cli lib install ESP32Servo
+    # Set up Arduino CLI if it was installed
+    if is_arduino_cli_installed; then
+        info "Configuring Arduino CLI..."
+        mkdir -p ~/.arduino15
+        ~/local/bin/arduino-cli config init --overwrite
+        ~/local/bin/arduino-cli config set network.connection_timeout 480s
+        ~/local/bin/arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+        ~/local/bin/arduino-cli core install arduino:avr
+        ~/local/bin/arduino-cli core install esp32:esp32
+        ~/local/bin/arduino-cli lib install LedControl
+        ~/local/bin/arduino-cli lib install BluetoothSerial
+        ~/local/bin/arduino-cli lib install ESP32Servo
+    fi
 
     # Create virtual environment and install Python dependencies
     if [ ! -d "venv" ]; then
