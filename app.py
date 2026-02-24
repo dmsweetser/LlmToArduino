@@ -657,7 +657,6 @@ class DialogueEngine:
             capabilities = device.get_capabilities() if hasattr(device, 'get_capabilities') else ""
             device_info.append({
                 "id": device.device_id,
-                "type": device.device_type,
                 "capabilities": capabilities
             })
 

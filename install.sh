@@ -100,9 +100,9 @@ download_with_resume() {
 configure_hardware() {
     # Start bluetoothctl and scan
     info "Starting Bluetooth scan for 10 seconds..."
-    bluetoothctl power on
-    bluetoothctl agent on
-    timeout 60 bluetoothctl scan on
+    bluetoothctl power on &
+    bluetoothctl agent on &
+    timeout 60 bluetoothctl scan on &
     sleep 10
 
     # Show available devices
