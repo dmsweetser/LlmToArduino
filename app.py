@@ -322,14 +322,6 @@ class HardwareManager:
         """Get all hardware devices"""
         return list(self.devices.values())
 
-    def get_bluetooth_device(self, device_name):
-        """Get Bluetooth device configuration"""
-        return self.bluetooth_devices.get(device_name)
-
-    def get_all_bluetooth_devices(self):
-        """Get all Bluetooth device configurations"""
-        return self.bluetooth_devices
-
 class HardwareCommunicator:
     """Handles direct hardware communication with functional approach"""
 
