@@ -131,19 +131,22 @@ configure_hardware() {
         error_exit "Invalid MAC address format for main board. Expected format: XX:XX:XX:XX:XX:XX"
     fi
 
-    # Create config file
+    # Create config file with virtual serial port information
     local config_content=$(cat <<EOF
 {
+    "serial_devices": {},
     "bluetooth_devices": {
         "camera_board": {
             "address": "$camera_mac",
-            "channel": 1,
-            "description": "Camera module"
+            "channel": 0,
+            "description": "Camera module",
+            "virtual_serial_port": "/dev/ttyRFCOMM0"
         },
         "main_board": {
             "address": "$main_mac",
             "channel": 1,
-            "description": "Main control board"
+            "description": "Main control board",
+            "virtual_serial_port": "/dev/ttyRFCOMM1"
         }
     }
 }
@@ -166,7 +169,7 @@ main() {
     sudo apt update -y
     sudo apt upgrade -y
 
-    # Install dependencies
+    # Install dependencies including Bluetooth tools
     info "Installing required system dependencies..."
     sudo apt install -y \
         portaudio19-dev \
@@ -182,14 +185,16 @@ main() {
         rfkill \
         pulseaudio-module-bluetooth \
         python3.11-venv \
-        python3-bluez
+        python3-bluez \
+        jq
 
     # Install Arduino CLI only if needed
     install_arduino_cli
 
-    # Add user to dialout group
-    info "Adding user to dialout group..."
+    # Add user to necessary groups
+    info "Adding user to necessary groups..."
     sudo usermod -aG dialout "$USERNAME"
+    sudo usermod -aG bluetooth "$USERNAME"
     info "You may need to log out and back in for group changes to take effect."
 
     # Set up Arduino CLI if it was installed
@@ -295,6 +300,7 @@ main() {
 
         info "Installation and configuration completed successfully."
         info "Configuration saved to $CONFIG_FILE"
+        info "Note: The run script will set up the virtual serial ports when you start the application."
     fi
 }
 

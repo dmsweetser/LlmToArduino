@@ -277,7 +277,6 @@ class HardwareManager:
         self.config_path = config_path
         self.config = {}
         self.devices = {}
-        self.bluetooth_devices = {}
         self.load_config()
 
     def load_config(self):
@@ -295,23 +294,24 @@ class HardwareManager:
 
     def _initialize_devices(self):
         """Initialize hardware devices from configuration"""
-        if 'hardware_devices' in self.config:
-            for name, device in self.config['hardware_devices'].items():
-                device_id = f"arduino_{name}"
+        if 'serial_devices' in self.config:
+            for name, device in self.config['serial_devices'].items():
+                device_id = f"serial_{name}"
                 self.devices[device_id] = HardwareCommunicator(
                     device_id=device_id,
                     port=device['port'],
-                    device_type='arduino'
+                    device_type='serial'
                 )
 
         if 'bluetooth_devices' in self.config:
             for name, device in self.config['bluetooth_devices'].items():
                 device_id = f"bluetooth_{name}"
-                self.devices[device_id] = BluetoothCommunicator(
+                # Map Bluetooth devices to virtual serial ports
+                virtual_port = f"/dev/ttyRFCOMM{device.get('channel', 0)}"
+                self.devices[device_id] = HardwareCommunicator(
                     device_id=device_id,
-                    name=name,
-                    address=device['address'],
-                    channel=device['channel']
+                    port=virtual_port,
+                    device_type='bluetooth_virtual_serial'
                 )
 
     def get_device(self, device_id):
@@ -328,6 +328,7 @@ class HardwareCommunicator:
     def __init__(self, device_id: str, port: str, device_type: str = "generic") -> None:
         self.device_id = device_id
         self.device_type = device_type
+        self.port = port
         try:
             self.serial_connection = serial.Serial(port, 9600, timeout=30)
             LoggingSystem.log(f"Serial port {port} opened successfully for device {device_id} ({device_type}).", LogLevel.INFO)
@@ -355,111 +356,6 @@ class HardwareCommunicator:
             return response.strip()
         except Exception as e:
             LoggingSystem.log(f"Error sending command to device {self.device_id}: {e}", LogLevel.ERROR)
-            return None
-
-    def get_capabilities(self, max_retries: int = 3) -> Optional[str]:
-        """Get device capabilities (expects 'getCapabilities:' command to return formatted response)"""
-        capabilities_command = "getCapabilities"
-        for attempt in range(max_retries):
-            response = self.send_command(capabilities_command)
-            if response:
-                self.capabilities = response
-                return response
-        return None
-
-class BluetoothCommunicator:
-    """Handles Bluetooth communication"""
-
-    def __init__(self, device_id: str, name: str, address: str, channel: int = 1):
-        self.device_id = device_id
-        self.name = name
-        self.address = address
-        self.channel = channel
-        self.socket = None
-        self.connected = False
-        self.capabilities = ""
-
-    def connect(self) -> bool:
-        """Connect to the Bluetooth device"""
-        try:
-            self.socket = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
-            self.socket.connect((self.address, self.channel))
-            self.connected = True
-            LoggingSystem.log(f"Connected to Bluetooth device {self.name} ({self.address})", LogLevel.INFO)
-            return True
-        except Exception as e:
-            LoggingSystem.log(f"Error connecting to Bluetooth device {self.name}: {e}", LogLevel.ERROR)
-            self.connected = False
-            return False
-
-    def disconnect(self) -> None:
-        """Disconnect from the Bluetooth device"""
-        if self.socket:
-            try:
-                self.socket.close()
-            except Exception as e:
-                LoggingSystem.log(f"Error closing Bluetooth socket: {e}", LogLevel.ERROR)
-            self.socket = None
-            self.connected = False
-
-    def send_command(self, command: str) -> Optional[str]:
-        """Send a command to the Bluetooth device (format: command:param)"""
-        if not self.connected:
-            if not self.connect():
-                return None
-
-        try:
-            # For camera commands that return binary data
-            if command.startswith("snapshot"):
-                self.socket.send(f"{command}:\n".encode())
-                time.sleep(0.5)
-
-                # Read image size (4 bytes)
-                size_bytes = b''
-                for _ in range(4):
-                    size_bytes += self.socket.recv(1)
-
-                if len(size_bytes) != 4:
-                    return None
-
-                size = int.from_bytes(size_bytes, byteorder='big')
-
-                # Read image data
-                image_data = b''
-                bytes_received = 0
-                while bytes_received < size:
-                    chunk = self.socket.recv(min(1024, size - bytes_received))
-                    if not chunk:
-                        break
-                    image_data += chunk
-                    bytes_received += len(chunk)
-
-                # Read end marker
-                end_marker = self.socket.recv(1)
-                if end_marker != b'E':
-                    return None
-
-                # Save image
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                image_path = f"captures/capture_{timestamp}.jpg"
-                os.makedirs("captures", exist_ok=True)
-                with open(image_path, "wb") as f:
-                    f.write(image_data)
-
-                return f"OK:Image saved to {image_path}"
-
-            else:
-                cmd_parts = command.split(':')
-                cmd = cmd_parts[0]
-                params = cmd_parts[1] if len(cmd_parts) > 1 else ""
-                self.socket.send(f"{cmd}:{params}\n".encode())
-                time.sleep(0.5)
-                response = self.socket.recv(1024).decode()
-                return response
-
-        except Exception as e:
-            LoggingSystem.log(f"Error sending command to Bluetooth device {self.name}: {e}", LogLevel.ERROR)
-            self.disconnect()
             return None
 
     def get_capabilities(self, max_retries: int = 3) -> Optional[str]:
@@ -649,6 +545,7 @@ class DialogueEngine:
             capabilities = device.get_capabilities() if hasattr(device, 'get_capabilities') else ""
             device_info.append({
                 "id": device.device_id,
+                "port": device.port,
                 "capabilities": capabilities
             })
 
@@ -954,7 +851,7 @@ class DialogueEngine:
                     "response_format": "Devices respond with 'status:response' where status is OK or ERROR",
                     "protocol_notes": {
                         "serial_devices": "Use standard serial communication with 9600 baud rate",
-                        "bluetooth_devices": "Use RFCOMM protocol with the configured channel",
+                        "bluetooth_virtual_serial": "Bluetooth devices are mapped to virtual serial ports /dev/ttyRFCOMM0, /dev/ttyRFCOMM1, etc.",
                         "image_transfer": "Camera device sends binary image data after 'snapshot' command"
                     }
                 }
@@ -1179,16 +1076,13 @@ if __name__ == "__main__":
                 elif user_input.lower() == 'hardware':
                     print("\nAvailable hardware devices:")
                     for device in hardware_manager.get_all_devices():
-                        if hasattr(device, 'port'):
-                            print(f"  {device.device_id} (Serial): {device.port}")
-                        else:
-                            print(f"  {device.device_id} (Bluetooth): {device.address}")
+                        print(f"  {device.device_id} ({device.device_type}): {device.port}")
                     continue
                 elif user_input.lower() == 'capabilities':
                     print("\nDevice capabilities:")
                     for device in hardware_manager.get_all_devices():
                         caps = device.get_capabilities()
-                        print(f"\n{device.device_id}:")
+                        print(f"\n{device.device_id} ({device.port}):")
                         if caps:
                             print(f"  {caps}")
                         else:
